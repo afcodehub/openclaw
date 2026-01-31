@@ -1,10 +1,11 @@
 # 🦞 OpenClaw — Personal AI Assistant
 
 <p align="center">
-    <picture>
-        <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text-dark.png">
-        <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/openclaw-logo-text.png" alt="OpenClaw" width="500">
-    </picture>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://cdn.jsdelivr.net/gh/afcodehub/openclaw/fork_afcodehub.png">
+  <img src="https://cdn.jsdelivr.net/gh/afcodehub/openclaw/fork_afcodehub.png" alt="OpenClaw Fork AfCodeHub" width="500">
+</picture>
+
 </p>
 
 <p align="center">
