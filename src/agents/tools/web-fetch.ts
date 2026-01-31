@@ -30,6 +30,7 @@ import {
   truncateText,
   type ExtractMode,
 } from "./web-fetch-utils.js";
+import { blockedDomainPayload, validateUrlAccess } from "./domain-whitelist.js";
 
 export { extractReadableContent } from "./web-fetch-utils.js";
 
@@ -63,19 +64,19 @@ const WebFetchSchema = Type.Object({
 
 type WebFetchConfig = NonNullable<OpenClawConfig["tools"]>["web"] extends infer Web
   ? Web extends { fetch?: infer Fetch }
-    ? Fetch
-    : undefined
+  ? Fetch
+  : undefined
   : undefined;
 
 type FirecrawlFetchConfig =
   | {
-      enabled?: boolean;
-      apiKey?: string;
-      baseUrl?: string;
-      onlyMainContent?: boolean;
-      maxAgeMs?: number;
-      timeoutSeconds?: number;
-    }
+    enabled?: boolean;
+    apiKey?: string;
+    baseUrl?: string;
+    onlyMainContent?: boolean;
+    maxAgeMs?: number;
+    timeoutSeconds?: number;
+  }
   | undefined;
 
 function resolveFetchConfig(cfg?: OpenClawConfig): WebFetchConfig {
@@ -598,6 +599,12 @@ export function createWebFetchTool(options?: {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const url = readStringParam(params, "url", { required: true });
+
+      const access = validateUrlAccess(url);
+      if (!access.allowed) {
+        return jsonResult(blockedDomainPayload(access.domain, url));
+      }
+
       const extractMode = readStringParam(params, "extractMode") === "text" ? "text" : "markdown";
       const maxChars = readNumberParam(params, "maxChars", { integer: true });
       const result = await runWebFetch({

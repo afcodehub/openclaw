@@ -25,6 +25,7 @@ import { usageHandlers } from "./server-methods/usage.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
 import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
+import { workspaceHandlers } from "./server-methods/workspace.js";
 
 const ADMIN_SCOPE = "operator.admin";
 const READ_SCOPE = "operator.read";
@@ -72,6 +73,8 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "workspace.files.list",
+  "workspace.files.get",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -88,6 +91,9 @@ const WRITE_METHODS = new Set([
   "chat.send",
   "chat.abort",
   "browser.request",
+  "workspace.files.set",
+  "workspace.files.delete",
+  "workspace.skills.init",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -171,6 +177,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...agentHandlers,
   ...agentsHandlers,
   ...browserHandlers,
+  ...workspaceHandlers,
 };
 
 export async function handleGatewayRequest(

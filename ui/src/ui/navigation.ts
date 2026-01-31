@@ -1,17 +1,21 @@
 import type { IconName } from "./icons.js";
 
 export const TAB_GROUPS = [
-  { label: "Chat", tabs: ["chat"] },
+  { label: "Conversa", tabs: ["chat"] },
   {
-    label: "Control",
-    tabs: ["overview", "channels", "instances", "sessions", "cron"],
+    label: "Controle",
+    tabs: ["overview", "whatsapp", "channels", "instances", "sessions", "cron"],
   },
-  { label: "Agent", tabs: ["skills", "nodes"] },
-  { label: "Settings", tabs: ["config", "debug", "logs"] },
+  {
+    label: "Agente",
+    tabs: ["skills", "nodes", "workspace"],
+  },
+  { label: "Configurações", tabs: ["config", "costs", "jsoneditor", "debug", "logs"] },
 ] as const;
 
 export type Tab =
   | "overview"
+  | "whatsapp"
   | "channels"
   | "instances"
   | "sessions"
@@ -20,11 +24,15 @@ export type Tab =
   | "nodes"
   | "chat"
   | "config"
+  | "costs"
+  | "jsoneditor"
   | "debug"
-  | "logs";
+  | "logs"
+  | "workspace";
 
 const TAB_PATHS: Record<Tab, string> = {
   overview: "/overview",
+  whatsapp: "/whatsapp",
   channels: "/channels",
   instances: "/instances",
   sessions: "/sessions",
@@ -33,8 +41,11 @@ const TAB_PATHS: Record<Tab, string> = {
   nodes: "/nodes",
   chat: "/chat",
   config: "/config",
+  costs: "/costs",
+  jsoneditor: "/jsoneditor",
   debug: "/debug",
   logs: "/logs",
+  workspace: "/workspace",
 };
 
 const PATH_TO_TAB = new Map(
@@ -106,6 +117,8 @@ export function iconForTab(tab: Tab): IconName {
       return "messageSquare";
     case "overview":
       return "barChart";
+    case "whatsapp":
+      return "smartphone";
     case "channels":
       return "link";
     case "instances":
@@ -114,16 +127,22 @@ export function iconForTab(tab: Tab): IconName {
       return "fileText";
     case "cron":
       return "loader";
+    case "costs":
+      return "dollarSign";
     case "skills":
       return "zap";
     case "nodes":
       return "monitor";
     case "config":
       return "settings";
+    case "jsoneditor":
+      return "fileText";
     case "debug":
       return "bug";
     case "logs":
       return "scrollText";
+    case "workspace":
+      return "folder";
     default:
       return "folder";
   }
@@ -131,57 +150,73 @@ export function iconForTab(tab: Tab): IconName {
 
 export function titleForTab(tab: Tab) {
   switch (tab) {
+    case "costs":
+      return "Relatório de Custos";
     case "overview":
-      return "Overview";
+      return "Visão Geral";
+    case "whatsapp":
+      return "WhatsApp";
     case "channels":
-      return "Channels";
+      return "Canais";
     case "instances":
-      return "Instances";
+      return "Instâncias";
     case "sessions":
-      return "Sessions";
+      return "Sessões";
     case "cron":
-      return "Cron Jobs";
+      return "Agendamentos (Cron)";
     case "skills":
-      return "Skills";
+      return "Habilidades";
     case "nodes":
-      return "Nodes";
+      return "Nós (Nodes)";
     case "chat":
-      return "Chat";
+      return "Chat Interno";
     case "config":
-      return "Config";
+      return "Configuração";
+    case "jsoneditor":
+      return "Editor JSON";
     case "debug":
-      return "Debug";
+      return "Depuração (Debug)";
     case "logs":
-      return "Logs";
+      return "Registros (Logs)";
+    case "workspace":
+      return "Workspace do Agente";
     default:
-      return "Control";
+      return "Controle";
   }
 }
 
 export function subtitleForTab(tab: Tab) {
   switch (tab) {
+    case "costs":
+      return "Monitore consumo de tokens e custos estimados da API em tempo real.";
     case "overview":
-      return "Gateway status, entry points, and a fast health read.";
+      return "Status do gateway, pontos de entrada e saúde do sistema.";
+    case "whatsapp":
+      return "Conecte e gerencie sua conta do WhatsApp Web.";
     case "channels":
-      return "Manage channels and settings.";
+      return "Gerencie os canais de mensagens e suas configurações.";
     case "instances":
-      return "Presence beacons from connected clients and nodes.";
+      return "Sinais de presença de clientes e nós conectados.";
     case "sessions":
-      return "Inspect active sessions and adjust per-session defaults.";
+      return "Inspecione sessões ativas e ajuste padrões por sessão.";
     case "cron":
-      return "Schedule wakeups and recurring agent runs.";
+      return "Agende despertadores e execuções recorrentes de agentes.";
     case "skills":
-      return "Manage skill availability and API key injection.";
+      return "Gerencie pacotes de habilidades e injeção de chaves de API.";
     case "nodes":
-      return "Paired devices, capabilities, and command exposure.";
+      return "Dispositivos pareados, capacidades e comandos expostos.";
     case "chat":
-      return "Direct gateway chat session for quick interventions.";
+      return "Sessão de chat direta com o gateway para intervenções rápidas.";
     case "config":
-      return "Edit ~/.openclaw/openclaw.json safely.";
+      return "Edite o arquivo moltbot.json de forma segura.";
+    case "jsoneditor":
+      return "Editor visual avançado para o arquivo moltbot.json com validação e formatação.";
     case "debug":
-      return "Gateway snapshots, events, and manual RPC calls.";
+      return "Snapshots do gateway, eventos e chamadas RPC manuais.";
     case "logs":
-      return "Live tail of the gateway file logs.";
+      return "Acompanhamento em tempo real dos logs do sistema.";
+    case "workspace":
+      return "Edite os arquivos de comportamento do agente (SOUL.md, AGENTS.md, etc).";
     default:
       return "";
   }

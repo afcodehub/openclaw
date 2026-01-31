@@ -16,6 +16,7 @@ import {
   withTimeout,
   writeCache,
 } from "./web-shared.js";
+import { getDomainWhitelistConfig, isWhitelistActive } from "./domain-whitelist.js";
 
 const SEARCH_PROVIDERS = ["brave", "perplexity"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
@@ -67,8 +68,8 @@ const WebSearchSchema = Type.Object({
 
 type WebSearchConfig = NonNullable<OpenClawConfig["tools"]>["web"] extends infer Web
   ? Web extends { search?: infer Search }
-    ? Search
-    : undefined
+  ? Search
+  : undefined
   : undefined;
 
 type BraveSearchResult = {
@@ -265,6 +266,63 @@ function resolveSiteName(url: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Filters search results to only include URLs from allowed domains.
+ * Returns the filtered results and count of removed results.
+ */
+function filterResultsByWhitelist<T extends { url?: string }>(
+  results: T[],
+): { filtered: T[]; removedCount: number } {
+  if (!isWhitelistActive()) {
+    return { filtered: results, removedCount: 0 };
+  }
+
+  const config = getDomainWhitelistConfig();
+  const filtered: T[] = [];
+  let removedCount = 0;
+
+  for (const result of results) {
+    if (!result.url) {
+      filtered.push(result);
+      continue;
+    }
+
+    try {
+      const url = new URL(result.url);
+      let hostname = url.hostname.toLowerCase();
+      if (hostname.startsWith("www.")) {
+        hostname = hostname.substring(4);
+      }
+
+      // Check direct match
+      if (config.domains.has(hostname)) {
+        filtered.push(result);
+        continue;
+      }
+
+      // Check subdomain match
+      let allowed = false;
+      for (const domain of config.domains) {
+        if (hostname.endsWith(`.${domain}`)) {
+          allowed = true;
+          break;
+        }
+      }
+
+      if (allowed) {
+        filtered.push(result);
+      } else {
+        removedCount++;
+      }
+    } catch {
+      // Invalid URL, include it anyway
+      filtered.push(result);
+    }
+  }
+
+  return { filtered, removedCount };
+}
+
 async function runPerplexitySearch(params: {
   query: string;
   apiKey: string;
@@ -395,13 +453,24 @@ async function runWebSearch(params: {
     siteName: resolveSiteName(entry.url ?? ""),
   }));
 
-  const payload = {
+  // Filter results by domain whitelist
+  const { filtered, removedCount } = filterResultsByWhitelist(mapped);
+
+  const payload: Record<string, unknown> = {
     query: params.query,
     provider: params.provider,
-    count: mapped.length,
+    count: filtered.length,
     tookMs: Date.now() - start,
-    results: mapped,
+    results: filtered,
   };
+
+  // Add whitelist info if results were filtered
+  if (removedCount > 0) {
+    payload.whitelistFiltered = true;
+    payload.removedCount = removedCount;
+    payload.note = `${removedCount} result(s) were removed because they are not from allowed domains.`;
+  }
+
   writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
   return payload;
 }

@@ -33,7 +33,7 @@ export function isLikelyWhatsAppCryptoError(reason: unknown) {
     haystack.includes("bad mac");
   if (!hasAuthError) return false;
   return (
-    haystack.includes("@whiskeysockets/baileys") ||
+    haystack.includes("whaileys") ||
     haystack.includes("baileys") ||
     haystack.includes("noise-handler") ||
     haystack.includes("aesdecryptgcm")

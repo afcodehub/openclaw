@@ -1,8 +1,8 @@
 import {
   loadChannels,
   logoutWhatsApp,
+  clearWhatsApp,
   startWhatsAppLogin,
-  waitWhatsAppLogin,
 } from "./controllers/channels";
 import { loadConfig, saveConfig } from "./controllers/config";
 import type { OpenClawApp } from "./app";
@@ -14,13 +14,13 @@ export async function handleWhatsAppStart(host: OpenClawApp, force: boolean) {
   await loadChannels(host, true);
 }
 
-export async function handleWhatsAppWait(host: OpenClawApp) {
-  await waitWhatsAppLogin(host);
+export async function handleWhatsAppLogout(host: OpenClawApp) {
+  await logoutWhatsApp(host);
   await loadChannels(host, true);
 }
 
-export async function handleWhatsAppLogout(host: OpenClawApp) {
-  await logoutWhatsApp(host);
+export async function handleWhatsAppClear(host: OpenClawApp) {
+  await clearWhatsApp(host);
   await loadChannels(host, true);
 }
 
@@ -28,6 +28,9 @@ export async function handleChannelConfigSave(host: OpenClawApp) {
   await saveConfig(host);
   await loadConfig(host);
   await loadChannels(host, true);
+
+  host.whatsappConfigSaved = true;
+  // O modal é fechado automaticamente ou por evento, mas garantimos que o estado seja limpo se necessário
 }
 
 export async function handleChannelConfigReload(host: OpenClawApp) {

@@ -52,7 +52,7 @@ vi.mock("../media/store.js", () => ({
   })),
 }));
 
-vi.mock("@whiskeysockets/baileys", () => {
+vi.mock("whaileys", () => {
   const created = createMockBaileys();
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw:lastSocket")] =
     created.lastSocket;
@@ -65,7 +65,7 @@ vi.mock("qrcode-terminal", () => ({
 }));
 
 export const baileys =
-  (await import("@whiskeysockets/baileys")) as unknown as typeof import("@whiskeysockets/baileys") & {
+  (await import("whaileys")) as unknown as typeof import("whaileys") & {
     makeWASocket: ReturnType<typeof vi.fn>;
     useMultiFileAuthState: ReturnType<typeof vi.fn>;
     fetchLatestBaileysVersion: ReturnType<typeof vi.fn>;

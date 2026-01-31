@@ -7,6 +7,7 @@ import type {
   AgentsListResult,
   ChannelsStatusSnapshot,
   ConfigSnapshot,
+  ConfigUiHints,
   CronJob,
   CronRunLogEntry,
   CronStatus,
@@ -85,7 +86,7 @@ export type AppViewState = {
   configSnapshot: ConfigSnapshot | null;
   configSchema: unknown | null;
   configSchemaLoading: boolean;
-  configUiHints: Record<string, unknown>;
+  configUiHints: ConfigUiHints;
   configForm: Record<string, unknown> | null;
   configFormOriginal: Record<string, unknown> | null;
   configFormMode: "form" | "raw";
@@ -97,6 +98,7 @@ export type AppViewState = {
   whatsappLoginQrDataUrl: string | null;
   whatsappLoginConnected: boolean | null;
   whatsappBusy: boolean;
+  whatsappConfigSaved: boolean;
   nostrProfileFormState: NostrProfileFormState | null;
   nostrProfileAccountId: string | null;
   configFormDirty: boolean;
@@ -146,6 +148,48 @@ export type AppViewState = {
   logsLevelFilters: Record<LogLevel, boolean>;
   logsAutoFollow: boolean;
   logsTruncated: boolean;
+  logsCursor: number | null;
+  logsLastFetchAt: number | null;
+  logsLimit: number;
+  logsMaxBytes: number;
+  applySessionKey: string;
+  configSchemaVersion: string | null;
+  configSearchQuery: string;
+  configActiveSection: string | null;
+  configActiveSubsection: string | null;
+  compactionStatus: import("./app-tool-stream").CompactionStatus | null;
+  chatStreamStartedAt: number | null;
+  refreshSessionsAfterChat: Set<string>;
+  sidebarOpen: boolean;
+  sidebarContent: string | null;
+  sidebarError: string | null;
+  splitRatio: number;
+  workspaceLoading: boolean;
+  workspaceSaving: boolean;
+  workspaceFiles: string[];
+  workspaceSelectedFile: string | null;
+  workspaceContent: string;
+  workspaceError: string | null;
+  workspaceShowSaveModal: boolean;
+  workspaceShowDeleteModal: boolean;
+  workspaceShowCreateModal: boolean;
+  workspaceFileToDelete: string | null;
+  jsonEditorLoading: boolean;
+  jsonEditorSaving: boolean;
+  jsonEditorContent: string;
+  jsonEditorError: string | null;
+  jsonEditorShowSaveModal: boolean;
+  jsonEditorValidationError: string | null;
+  costsLoading: boolean;
+  costsSummary: import("./views/costs").CostUsageSummary | null;
+  costsError: string | null;
+  costsDays: number;
+  costsAutoRefresh: boolean;
+  costsLastUpdated: number | null;
+  costsLimitStatus: import("./views/costs").DailyLimitStatus | null;
+  costsLimitLoading: boolean;
+  costsLimitSaving: boolean;
+  costsLimitSaveError: string | null;
   client: GatewayBrowserClient | null;
   connect: () => void;
   setTab: (tab: Tab) => void;
@@ -155,7 +199,6 @@ export type AppViewState = {
   loadAssistantIdentity: () => Promise<void>;
   loadCron: () => Promise<void>;
   handleWhatsAppStart: (force: boolean) => Promise<void>;
-  handleWhatsAppWait: () => Promise<void>;
   handleWhatsAppLogout: () => Promise<void>;
   handleChannelConfigSave: () => Promise<void>;
   handleChannelConfigReload: () => Promise<void>;
@@ -206,4 +249,34 @@ export type AppViewState = {
   handleLogsLevelFilterToggle: (level: LogLevel) => void;
   handleLogsAutoFollowToggle: (next: boolean) => void;
   handleCallDebugMethod: (method: string, params: string) => Promise<void>;
+  resetToolStream: () => void;
+  resetChatScroll: () => void;
+  handleChatScroll: (event: Event) => void;
+  handleSendChat: (messageOverride?: string, opts?: any) => Promise<void>;
+  handleAbortChat: () => Promise<void>;
+  removeQueuedMessage: (id: string) => void;
+  handleOpenSidebar: (content: string) => void;
+  handleCloseSidebar: () => void;
+  handleSplitRatioChange: (ratio: number) => void;
+  exportLogs: (lines: string[], label: string) => void;
+  handleLogsScroll: (event: Event) => void;
+  handleWorkspaceFilesLoad: () => Promise<void>;
+  handleWorkspaceFileLoad: (file: string) => Promise<void>;
+  handleWorkspaceSave: () => Promise<void>;
+  handleWorkspaceFileDelete: (file: string) => Promise<void>;
+  handleWorkspaceSkillInit: (name: string) => Promise<void>;
+  handleWorkspaceShowDeleteModal: (file: string) => void;
+  handleWorkspaceHideDeleteModal: () => void;
+  handleWorkspaceShowCreateModal: () => void;
+  handleWorkspaceHideCreateModal: () => void;
+  handleWorkspaceHideSaveModal: () => void;
+  handleCostsLoad: () => Promise<void>;
+  handleCostsLimitSave: (enabled: boolean, maxDailyCostUsd: number | null, warningThreshold: number) => Promise<void>;
+  handleWhatsAppClear: () => Promise<void>;
+  handleJsonEditorLoad: () => Promise<void>;
+  handleJsonEditorContentChange: (content: string) => void;
+  handleJsonEditorFormat: () => void;
+  handleJsonEditorValidate: () => void;
+  handleJsonEditorSave: () => Promise<void>;
+  handleJsonEditorHideSaveModal: () => void;
 };

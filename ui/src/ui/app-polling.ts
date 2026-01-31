@@ -1,6 +1,7 @@
 import { loadLogs } from "./controllers/logs";
 import { loadNodes } from "./controllers/nodes";
 import { loadDebug } from "./controllers/debug";
+import { loadChannels } from "./controllers/channels";
 import type { OpenClawApp } from "./app";
 
 type PollingHost = {
@@ -50,4 +51,18 @@ export function stopDebugPolling(host: PollingHost) {
   if (host.debugPollInterval == null) return;
   clearInterval(host.debugPollInterval);
   host.debugPollInterval = null;
+}
+
+export function startWhatsAppPolling(host: PollingHost) {
+  if ((host as any).whatsappPollInterval != null) return;
+  (host as any).whatsappPollInterval = window.setInterval(() => {
+    if (host.tab !== "whatsapp") return;
+    void loadChannels(host as unknown as OpenClawApp, true);
+  }, 3000);
+}
+
+export function stopWhatsAppPolling(host: PollingHost) {
+  if ((host as any).whatsappPollInterval == null) return;
+  clearInterval((host as any).whatsappPollInterval);
+  (host as any).whatsappPollInterval = null;
 }

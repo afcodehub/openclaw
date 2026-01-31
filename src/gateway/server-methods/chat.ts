@@ -331,10 +331,10 @@ export const chatHandlers: GatewayRequestHandlers = {
               ? a.content
               : ArrayBuffer.isView(a?.content)
                 ? Buffer.from(
-                    a.content.buffer,
-                    a.content.byteOffset,
-                    a.content.byteLength,
-                  ).toString("base64")
+                  a.content.buffer,
+                  a.content.byteOffset,
+                  a.content.byteLength,
+                ).toString("base64")
                 : undefined,
         }))
         .filter((a) => a.content) ?? [];
@@ -382,6 +382,18 @@ export const chatHandlers: GatewayRequestHandlers = {
         false,
         undefined,
         errorShape(ErrorCodes.INVALID_REQUEST, "send blocked by session policy"),
+      );
+      return;
+    }
+
+    // Verificar limite diário de gastos
+    const { checkDailyLimitExceeded } = await import("./usage.js");
+    const limitCheck = await checkDailyLimitExceeded();
+    if (limitCheck.exceeded) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.DAILY_LIMIT_EXCEEDED, limitCheck.message ?? "Limite diário de gastos atingido"),
       );
       return;
     }

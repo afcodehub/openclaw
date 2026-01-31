@@ -46,9 +46,9 @@ vi.mock("../media/store.js", async (importOriginal) => {
 const HOME = path.join(os.tmpdir(), `openclaw-inbound-media-${crypto.randomUUID()}`);
 process.env.HOME = HOME;
 
-vi.mock("@whiskeysockets/baileys", async () => {
+vi.mock("whaileys", async () => {
   const actual =
-    await vi.importActual<typeof import("@whiskeysockets/baileys")>("@whiskeysockets/baileys");
+    await vi.importActual<typeof import("whaileys")>("whaileys");
   const jpegBuffer = Buffer.from([
     0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x02, 0x02, 0x02, 0x03, 0x02, 0x02,
     0x02, 0x03, 0x03, 0x03, 0x03, 0x04, 0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x08, 0x06, 0x06, 0x05,

@@ -43,10 +43,10 @@ export type OpenClawConfig = {
     vars?: Record<string, string>;
     /** Sugar: allow env vars directly under env (string values only). */
     [key: string]:
-      | string
-      | Record<string, string>
-      | { enabled?: boolean; timeoutMs?: number }
-      | undefined;
+    | string
+    | Record<string, string>
+    | { enabled?: boolean; timeoutMs?: number }
+    | undefined;
   };
   wizard?: {
     lastRunAt?: string;
@@ -95,6 +95,22 @@ export type OpenClawConfig = {
   canvasHost?: CanvasHostConfig;
   talk?: TalkConfig;
   gateway?: GatewayConfig;
+  /** Configurações de uso e limites de gastos. */
+  usage?: UsageConfig;
+};
+
+export type UsageDailyLimitConfig = {
+  /** Habilita o limite diário de gastos. */
+  enabled?: boolean;
+  /** Limite máximo de gastos diários em USD. */
+  maxDailyCostUsd?: number;
+  /** Percentual para exibir alerta de aviso (padrão: 80). */
+  warningThreshold?: number;
+};
+
+export type UsageConfig = {
+  /** Configurações de limite diário de gastos. */
+  dailyLimit?: UsageDailyLimitConfig;
 };
 
 export type ConfigValidationIssue = {

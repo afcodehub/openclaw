@@ -106,8 +106,8 @@ export const channelsHandlers: GatewayRequestHandlers = {
       plugin.config.isEnabled
         ? plugin.config.isEnabled(account, cfg)
         : !account ||
-          typeof account !== "object" ||
-          (account as { enabled?: boolean }).enabled !== false;
+        typeof account !== "object" ||
+        (account as { enabled?: boolean }).enabled !== false;
 
     const buildChannelAccounts = async (channelId: ChannelId) => {
       const plugin = pluginMap.get(channelId);
@@ -211,18 +211,18 @@ export const channelsHandlers: GatewayRequestHandlers = {
         resolvedAccounts[defaultAccountId] ?? plugin.config.resolveAccount(cfg, defaultAccountId);
       const summary = plugin.status?.buildChannelSummary
         ? await plugin.status.buildChannelSummary({
-            account: fallbackAccount,
-            cfg,
-            defaultAccountId,
-            snapshot:
-              defaultAccount ??
-              ({
-                accountId: defaultAccountId,
-              } as ChannelAccountSnapshot),
-          })
+          account: fallbackAccount,
+          cfg,
+          defaultAccountId,
+          snapshot:
+            defaultAccount ??
+            ({
+              accountId: defaultAccountId,
+            } as ChannelAccountSnapshot),
+        })
         : {
-            configured: defaultAccount?.configured ?? false,
-          };
+          configured: defaultAccount?.configured ?? false,
+        };
       channelsMap[plugin.id] = summary;
       accountsMap[plugin.id] = accounts;
       defaultAccountIdMap[plugin.id] = defaultAccountId;
@@ -280,6 +280,85 @@ export const channelsHandlers: GatewayRequestHandlers = {
         context,
         plugin,
       });
+      respond(true, payload, undefined);
+    } catch (err) {
+      respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+    }
+  },
+  "channels.clear": async ({ params, respond, context }) => {
+    if (!validateChannelsLogoutParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid channels.clear params: ${formatValidationErrors(validateChannelsLogoutParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const rawChannel = (params as { channel?: unknown }).channel;
+    const channelId = typeof rawChannel === "string" ? normalizeChannelId(rawChannel) : null;
+    if (channelId !== "whatsapp") {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "channels.clear only supports whatsapp channel"),
+      );
+      return;
+    }
+
+    try {
+      const { defaultRuntime } = await import("../../runtime.js");
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+      const { resolveOAuthDir } = await import("../../config/paths.js");
+
+      // 1. FIRST: Stop the channel to close all connections
+      defaultRuntime.log("Parando canal WhatsApp...");
+      try {
+        await context.stopChannel(channelId, "default");
+      } catch (stopErr) {
+        // Ignore stop errors - channel might not be running
+        defaultRuntime.log(`Stop channel warning: ${String(stopErr)}`);
+      }
+
+      // 2. Wait a moment for connections to close
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // 3. Clear ALL WhatsApp session data - delete the entire whatsapp directory
+      const oauthDir = resolveOAuthDir();
+      const whatsappDir = path.join(oauthDir, "whatsapp");
+
+      let filesDeleted = 0;
+      try {
+        // Check if directory exists before trying to delete
+        await fs.access(whatsappDir);
+
+        // List all contents for logging
+        const entries = await fs.readdir(whatsappDir, { recursive: true });
+        filesDeleted = entries.length;
+
+        // Remove the entire whatsapp directory recursively
+        await fs.rm(whatsappDir, { recursive: true, force: true });
+        defaultRuntime.log(`WhatsApp: ${filesDeleted} arquivos/pastas removidos`);
+      } catch (accessErr) {
+        // Directory doesn't exist or can't access - that's fine
+        defaultRuntime.log("WhatsApp: Nenhum dado anterior encontrado");
+      }
+
+      // 4. Mark channel as logged out
+      context.markChannelLoggedOut(channelId, true, "default");
+      defaultRuntime.log("Sessão WhatsApp completamente limpa!");
+
+      const payload = {
+        channel: channelId,
+        accountId: "default",
+        cleared: true,
+        filesDeleted,
+        message: "WhatsApp session completely cleared. Generate a new QR code to reconnect.",
+      };
+
       respond(true, payload, undefined);
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));

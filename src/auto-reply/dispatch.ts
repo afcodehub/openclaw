@@ -21,6 +21,29 @@ export async function dispatchInboundMessage(params: {
   replyOptions?: Omit<GetReplyOptions, "onToolResult" | "onBlockReply">;
   replyResolver?: typeof import("./reply.js").getReplyFromConfig;
 }): Promise<DispatchInboundResult> {
+  // Verificar limite diário de gastos globalmente (sem dependência circular com gateway)
+  const { loadCostUsageSummary } = await import("../infra/session-cost-usage.js");
+  const limitCheck = await (async () => {
+    const limitConfig = params.cfg.usage?.dailyLimit;
+    if (!limitConfig?.enabled || !limitConfig?.maxDailyCostUsd) {
+      return { exceeded: false };
+    }
+    const summary = await loadCostUsageSummary({ days: 1, config: params.cfg, agentId: "main" });
+    const todayCost = summary.totals?.totalCost ?? 0;
+    const limit = limitConfig.maxDailyCostUsd;
+    if (todayCost >= limit) {
+      return { exceeded: true };
+    }
+    return { exceeded: false };
+  })();
+
+  if (limitCheck.exceeded) {
+    return {
+      queuedFinal: false,
+      counts: { tool: 0, block: 0, final: 0 },
+    };
+  }
+
   const finalized = finalizeInboundContext(params.ctx);
   return await dispatchReplyFromConfig({
     ctx: finalized,

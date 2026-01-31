@@ -26,6 +26,7 @@ const parseDays = (raw: unknown): number => {
 async function loadCostUsageSummaryCached(params: {
   days: number;
   config: ReturnType<typeof loadConfig>;
+  agentId?: string;
 }): Promise<CostUsageSummary> {
   const days = Math.max(1, params.days);
   const now = Date.now();
@@ -40,7 +41,7 @@ async function loadCostUsageSummaryCached(params: {
   }
 
   const entry: CostUsageCacheEntry = cached ?? {};
-  const inFlight = loadCostUsageSummary({ days, config: params.config })
+  const inFlight = loadCostUsageSummary({ days, config: params.config, agentId: params.agentId })
     .then((summary) => {
       costUsageCache.set(days, { summary, updatedAt: Date.now() });
       return summary;
@@ -72,7 +73,81 @@ export const usageHandlers: GatewayRequestHandlers = {
   "usage.cost": async ({ respond, params }) => {
     const config = loadConfig();
     const days = parseDays(params?.days);
-    const summary = await loadCostUsageSummaryCached({ days, config });
+    const summary = await loadCostUsageSummaryCached({ days, config, agentId: "main" });
     respond(true, summary, undefined);
   },
+  "usage.limit.check": async ({ respond }) => {
+    const config = loadConfig();
+    const limitConfig = config.usage?.dailyLimit;
+
+    if (!limitConfig?.enabled || !limitConfig?.maxDailyCostUsd) {
+      respond(true, {
+        enabled: false,
+        exceeded: false,
+        todayCost: 0,
+        limit: 0,
+        remaining: 0,
+        percentage: 0,
+      });
+      return;
+    }
+
+    const summary = await loadCostUsageSummaryCached({ days: 1, config, agentId: "main" });
+    const todayCost = summary.totals?.totalCost ?? 0;
+    const limit = limitConfig.maxDailyCostUsd;
+    const exceeded = todayCost >= limit;
+    const remaining = Math.max(0, limit - todayCost);
+    const percentage = limit > 0 ? Math.min(100, (todayCost / limit) * 100) : 0;
+
+    console.log("[UsageLimit] Check:", {
+      todayCost,
+      limit,
+      exceeded,
+      enabled: limitConfig.enabled,
+      percentage: percentage.toFixed(1) + "%",
+    });
+
+    respond(true, {
+      enabled: true,
+      exceeded,
+      todayCost,
+      limit,
+      remaining,
+      percentage,
+      warningThreshold: limitConfig.warningThreshold ?? 80,
+    });
+  },
+  "usage.limit.status": async (ctx) => {
+    return usageHandlers["usage.limit.check"](ctx);
+  },
 };
+
+// Função exportada para verificar limite antes de processar mensagens
+export async function checkDailyLimitExceeded(): Promise<{
+  exceeded: boolean;
+  message?: string;
+  todayCost?: number;
+  limit?: number;
+}> {
+  const config = loadConfig();
+  const limitConfig = config.usage?.dailyLimit;
+
+  if (!limitConfig?.enabled || !limitConfig?.maxDailyCostUsd) {
+    return { exceeded: false };
+  }
+
+  const summary = await loadCostUsageSummaryCached({ days: 1, config, agentId: "main" });
+  const todayCost = summary.totals?.totalCost ?? 0;
+  const limit = limitConfig.maxDailyCostUsd;
+
+  if (todayCost >= limit) {
+    return {
+      exceeded: true,
+      message: `Limite diário de gastos atingido (${todayCost.toFixed(2)}/${limit.toFixed(2)} USD). Por favor, aguarde até amanhã ou aumente o limite.`,
+      todayCost,
+      limit,
+    };
+  }
+
+  return { exceeded: false, todayCost, limit };
+}

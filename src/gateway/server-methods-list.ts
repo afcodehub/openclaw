@@ -5,9 +5,12 @@ const BASE_METHODS = [
   "logs.tail",
   "channels.status",
   "channels.logout",
+  "channels.clear",
   "status",
   "usage.status",
   "usage.cost",
+  "usage.limit.check",
+  "usage.limit.status",
   "tts.status",
   "tts.providers",
   "tts.enable",
@@ -82,6 +85,11 @@ const BASE_METHODS = [
   "chat.history",
   "chat.abort",
   "chat.send",
+  "workspace.files.list",
+  "workspace.files.get",
+  "workspace.files.set",
+  "workspace.files.delete",
+  "workspace.skills.init",
 ];
 
 export function listGatewayMethods(): string[] {

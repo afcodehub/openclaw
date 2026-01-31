@@ -1,4 +1,4 @@
-import type { AnyMessageContent, WAPresence } from "@whiskeysockets/baileys";
+import type { AnyMessageContent, WAPresence } from "whaileys";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
 import { toWhatsappJid } from "../../utils.js";
 import type { ActiveWebSendOptions } from "../active-listener.js";
@@ -72,7 +72,7 @@ export function createWebSendApi(params: {
           values: poll.options,
           selectableCount: poll.maxSelections ?? 1,
         },
-      } as AnyMessageContent);
+      } as any);
       recordChannelActivity({
         channel: "whatsapp",
         accountId: params.defaultAccountId,
@@ -102,7 +102,7 @@ export function createWebSendApi(params: {
             participant: participant ? toWhatsappJid(participant) : undefined,
           },
         },
-      } as AnyMessageContent);
+      } as any);
     },
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = toWhatsappJid(to);

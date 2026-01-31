@@ -1,5 +1,5 @@
-import type { AnyMessageContent, proto, WAMessage } from "@whiskeysockets/baileys";
-import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
+import type { AnyMessageContent, proto, WAMessage } from "whaileys";
+import { DisconnectReason, isJidGroup } from "whaileys";
 import { formatLocationText } from "../../channels/location.js";
 import { logVerbose, shouldLogVerbose } from "../../globals.js";
 import { recordChannelActivity } from "../../infra/channel-activity.js";
@@ -120,7 +120,7 @@ export async function monitorWebInbox(options: {
       const participants =
         (
           await Promise.all(
-            meta.participants?.map(async (p) => {
+            meta.participants?.map(async (p: any) => {
               const mapped = await resolveInboundJid(p.id);
               return mapped ?? p.id;
             }) ?? [],
@@ -187,7 +187,7 @@ export async function monitorWebInbox(options: {
         isFromMe: Boolean(msg.key?.fromMe),
         messageTimestampMs,
         connectedAtMs,
-        sock: { sendMessage: (jid, content) => sock.sendMessage(jid, content) },
+        sock: { sendMessage: (jid, content) => sock.sendMessage(jid, content as any) },
         remoteJid,
       });
       if (!access.allowed) continue;
@@ -314,7 +314,7 @@ export async function monitorWebInbox(options: {
   sock.ev.on("messages.upsert", handleMessagesUpsert);
 
   const handleConnectionUpdate = (
-    update: Partial<import("@whiskeysockets/baileys").ConnectionState>,
+    update: Partial<import("whaileys").ConnectionState>,
   ) => {
     try {
       if (update.connection === "close") {

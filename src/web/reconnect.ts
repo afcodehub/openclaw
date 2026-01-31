@@ -10,11 +10,11 @@ export type ReconnectPolicy = BackoffPolicy & {
 
 export const DEFAULT_HEARTBEAT_SECONDS = 60;
 export const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
-  initialMs: 2_000,
-  maxMs: 30_000,
-  factor: 1.8,
-  jitter: 0.25,
-  maxAttempts: 12,
+  initialMs: 1_000,      // Reduzido de 2s para 1s - reconecta mais rápido
+  maxMs: 60_000,         // Aumentado de 30s para 60s - mais tempo entre tentativas após várias falhas
+  factor: 2.0,           // Aumentado de 1.8 para 2.0 - backoff mais agressivo
+  jitter: 0.1,           // Reduzido de 0.25 para 0.1 - menos variação aleatória
+  maxAttempts: 20,       // Aumentado de 12 para 20 - mais tentativas antes de desistir
 };
 
 const clamp = (val: number, min: number, max: number) => Math.max(min, Math.min(max, val));

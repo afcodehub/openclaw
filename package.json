@@ -171,7 +171,7 @@
     "@sinclair/typebox": "0.34.47",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.13.0",
-    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "whaileys": "^6.4.10",
     "ajv": "^8.17.1",
     "body-parser": "^2.2.2",
     "chalk": "^5.6.2",

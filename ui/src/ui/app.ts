@@ -25,6 +25,7 @@ import type {
   NostrProfile,
 } from "./types";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types";
+import { type SkillMessage } from "./controllers/skills";
 import type { EventLogEntry } from "./app-events";
 import { DEFAULT_CRON_FORM, DEFAULT_LOG_LEVEL_FILTERS } from "./app-defaults";
 import type {
@@ -72,11 +73,61 @@ import {
   handleNostrProfileImport as handleNostrProfileImportInternal,
   handleNostrProfileSave as handleNostrProfileSaveInternal,
   handleNostrProfileToggleAdvanced as handleNostrProfileToggleAdvancedInternal,
+  handleWhatsAppClear as handleWhatsAppClearInternal,
   handleWhatsAppLogout as handleWhatsAppLogoutInternal,
   handleWhatsAppStart as handleWhatsAppStartInternal,
-  handleWhatsAppWait as handleWhatsAppWaitInternal,
 } from "./app-channels";
+import {
+  handleWorkspaceFilesLoad as handleWorkspaceFilesLoadInternal,
+  handleWorkspaceFileLoad as handleWorkspaceFileLoadInternal,
+  handleWorkspaceSave as handleWorkspaceSaveInternal,
+  handleWorkspaceFileDelete as handleWorkspaceFileDeleteInternal,
+  handleWorkspaceShowDeleteModal as handleWorkspaceShowDeleteModalInternal,
+  handleWorkspaceHideDeleteModal as handleWorkspaceHideDeleteModalInternal,
+  handleWorkspaceShowCreateModal as handleWorkspaceShowCreateModalInternal,
+  handleWorkspaceHideCreateModal as handleWorkspaceHideCreateModalInternal,
+  handleWorkspaceSkillInit as handleWorkspaceSkillInitInternal,
+  handleWorkspaceHideSaveModal as handleWorkspaceHideSaveModalInternal,
+} from "./app-workspace.js";
+import {
+  handleCostsLimitSave as handleCostsLimitSaveInternal,
+} from "./app-costs.js";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form";
+import {
+  handleConfigLoad as handleConfigLoadInternal,
+  handleConfigSave as handleConfigSaveInternal,
+  handleConfigApply as handleConfigApplyInternal,
+  handleConfigFormUpdate as handleConfigFormUpdateInternal,
+  handleConfigFormModeChange as handleConfigFormModeChangeInternal,
+  handleConfigRawChange as handleConfigRawChangeInternal,
+  updateConfigFormValue,
+} from "./app-config.js";
+import {
+  handleInstallSkill as handleInstallSkillInternal,
+  handleUpdateSkill as handleUpdateSkillInternal,
+  handleToggleSkillEnabled as handleToggleSkillEnabledInternal,
+  handleUpdateSkillEdit as handleUpdateSkillEditInternal,
+  handleSaveSkillApiKey as handleSaveSkillApiKeyInternal,
+  handleCronToggle as handleCronToggleInternal,
+  handleCronRun as handleCronRunInternal,
+  handleCronRemove as handleCronRemoveInternal,
+  handleCronAdd as handleCronAddInternal,
+  handleCronRunsLoad as handleCronRunsLoadInternal,
+  handleCronFormUpdate as handleCronFormUpdateInternal,
+  handleSessionsLoad as handleSessionsLoadInternal,
+  handleSessionsPatch as handleSessionsPatchInternal,
+  handleLoadNodes as handleLoadNodesInternal,
+  handleLoadPresence as handleLoadPresenceInternal,
+  handleLoadSkills as handleLoadSkillsInternal,
+  handleLoadDebug as handleLoadDebugInternal,
+  handleLoadLogs as handleLoadLogsInternal,
+  handleDebugCall as handleDebugCallInternal,
+  handleRunUpdate as handleRunUpdateInternal,
+  setPassword as setPasswordInternal,
+  setSessionKey as setSessionKeyInternal,
+  setChatMessage as setChatMessageInternal,
+  handleCallDebugMethod as handleCallDebugMethodInternal,
+} from "./app-handlers.js";
 import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./controllers/assistant-identity";
 
 declare global {
@@ -184,8 +235,37 @@ export class OpenClawApp extends LitElement {
   @state() whatsappLoginQrDataUrl: string | null = null;
   @state() whatsappLoginConnected: boolean | null = null;
   @state() whatsappBusy = false;
+  @state() whatsappConfigSaved = false;
   @state() nostrProfileFormState: NostrProfileFormState | null = null;
   @state() nostrProfileAccountId: string | null = null;
+
+  @state() workspaceLoading = false;
+  @state() workspaceSaving = false;
+  @state() workspaceFiles: string[] = [];
+  @state() workspaceSelectedFile: string | null = null;
+  @state() workspaceContent = "";
+  @state() workspaceError: string | null = null;
+  @state() workspaceShowSaveModal = false;
+  @state() workspaceShowDeleteModal = false;
+  @state() workspaceShowCreateModal = false;
+  @state() workspaceFileToDelete: string | null = null;
+  @state() jsonEditorLoading = false;
+  @state() jsonEditorSaving = false;
+  @state() jsonEditorContent = "";
+  @state() jsonEditorError: string | null = null;
+  @state() jsonEditorShowSaveModal = false;
+  @state() jsonEditorValidationError: string | null = null;
+
+  @state() costsLoading = false;
+  @state() costsSummary: import("./views/costs").CostUsageSummary | null = null;
+  @state() costsError: string | null = null;
+  @state() costsDays = 7;
+  @state() costsAutoRefresh = true;
+  @state() costsLastUpdated: number | null = null;
+  @state() costsLimitStatus: import("./views/costs").DailyLimitStatus | null = null;
+  @state() costsLimitLoading = false;
+  @state() costsLimitSaving = false;
+  @state() costsLimitSaveError: string | null = null;
 
   @state() presenceLoading = false;
   @state() presenceEntries: PresenceEntry[] = [];
@@ -258,7 +338,7 @@ export class OpenClawApp extends LitElement {
   private logsScrollFrame: number | null = null;
   private toolStreamById = new Map<string, ToolStreamEntry>();
   private toolStreamOrder: string[] = [];
-  refreshSessionsAfterChat = false;
+  refreshSessionsAfterChat = new Set<string>();
   basePath = "";
   private popStateHandler = () =>
     onPopStateInternal(
@@ -392,12 +472,14 @@ export class OpenClawApp extends LitElement {
     await handleWhatsAppStartInternal(this, force);
   }
 
-  async handleWhatsAppWait() {
-    await handleWhatsAppWaitInternal(this);
-  }
+
 
   async handleWhatsAppLogout() {
     await handleWhatsAppLogoutInternal(this);
+  }
+
+  async handleWhatsAppClear() {
+    await handleWhatsAppClearInternal(this);
   }
 
   async handleChannelConfigSave() {
@@ -406,6 +488,30 @@ export class OpenClawApp extends LitElement {
 
   async handleChannelConfigReload() {
     await handleChannelConfigReloadInternal(this);
+  }
+
+  async handleConfigLoad() {
+    await handleConfigLoadInternal(this);
+  }
+
+  async handleConfigSave() {
+    await handleConfigSaveInternal(this);
+  }
+
+  async handleConfigApply() {
+    await handleConfigApplyInternal(this);
+  }
+
+  handleConfigFormUpdate(path: string, value: unknown) {
+    handleConfigFormUpdateInternal(this, path, value);
+  }
+
+  handleConfigFormModeChange(mode: "form" | "raw") {
+    handleConfigFormModeChangeInternal(this, mode);
+  }
+
+  handleConfigRawChange(raw: string) {
+    handleConfigRawChangeInternal(this, raw);
   }
 
   handleNostrProfileEdit(accountId: string, profile: NostrProfile | null) {
@@ -432,6 +538,138 @@ export class OpenClawApp extends LitElement {
     handleNostrProfileToggleAdvancedInternal(this);
   }
 
+  async handleWorkspaceFilesLoad() {
+    await handleWorkspaceFilesLoadInternal(this);
+  }
+
+  async handleWorkspaceFileLoad(file: string) {
+    await handleWorkspaceFileLoadInternal(this, file);
+  }
+
+  async handleWorkspaceSave() {
+    await handleWorkspaceSaveInternal(this);
+  }
+
+  async handleWorkspaceFileDelete(file: string) {
+    await handleWorkspaceFileDeleteInternal(this, file);
+  }
+
+  handleWorkspaceShowDeleteModal(file: string) {
+    handleWorkspaceShowDeleteModalInternal(this, file);
+  }
+
+  handleWorkspaceHideDeleteModal() {
+    handleWorkspaceHideDeleteModalInternal(this);
+  }
+
+  handleWorkspaceShowCreateModal() {
+    handleWorkspaceShowCreateModalInternal(this);
+  }
+
+  handleWorkspaceHideCreateModal() {
+    handleWorkspaceHideCreateModalInternal(this);
+  }
+
+  async handleWorkspaceSkillInit(name: string) {
+    await handleWorkspaceSkillInitInternal(
+      this as unknown as Parameters<typeof handleWorkspaceSkillInitInternal>[0],
+      name,
+    );
+  }
+
+  handleWorkspaceHideSaveModal() {
+    this.workspaceShowSaveModal = false;
+  }
+
+  async handleJsonEditorLoad() {
+    this.jsonEditorLoading = true;
+    this.jsonEditorError = null;
+    this.jsonEditorValidationError = null;
+
+    try {
+      const snapshot: any = await this.client?.request("config.get", {});
+      // Save the snapshot to get the hash for later save
+      this.configSnapshot = snapshot;
+
+      // Get the config content
+      const config = snapshot.config || JSON.parse(snapshot.raw || '{}');
+      this.jsonEditorContent = JSON.stringify(config, null, 2);
+      this.validateJson();
+    } catch (err) {
+      this.jsonEditorError = String(err);
+    } finally {
+      this.jsonEditorLoading = false;
+    }
+  }
+
+  handleJsonEditorContentChange(content: string) {
+    this.jsonEditorContent = content;
+    this.validateJson();
+  }
+
+  validateJson() {
+    try {
+      JSON.parse(this.jsonEditorContent);
+      this.jsonEditorValidationError = null;
+    } catch (err: any) {
+      this.jsonEditorValidationError = err.message;
+    }
+  }
+
+  handleJsonEditorFormat() {
+    try {
+      const parsed = JSON.parse(this.jsonEditorContent);
+      this.jsonEditorContent = JSON.stringify(parsed, null, 2);
+      this.jsonEditorValidationError = null;
+    } catch (err: any) {
+      this.jsonEditorValidationError = err.message;
+    }
+  }
+
+  handleJsonEditorValidate() {
+    this.validateJson();
+  }
+
+  async handleJsonEditorSave() {
+    if (this.jsonEditorValidationError) return;
+
+    if (!this.configSnapshot?.hash) {
+      this.jsonEditorError = "Config hash missing; reload and retry.";
+      return;
+    }
+
+    this.jsonEditorSaving = true;
+    this.jsonEditorError = null;
+
+    try {
+      const parsed = JSON.parse(this.jsonEditorContent);
+      await this.client?.request("config.apply", {
+        raw: JSON.stringify(parsed, null, 2),
+        baseHash: this.configSnapshot.hash
+      });
+
+      this.jsonEditorShowSaveModal = true;
+      setTimeout(() => {
+        this.jsonEditorShowSaveModal = false;
+      }, 3000);
+
+      // Reload config to get new hash
+      await this.handleJsonEditorLoad();
+    } catch (err) {
+      this.jsonEditorError = String(err);
+    } finally {
+      this.jsonEditorSaving = false;
+    }
+  }
+
+  handleJsonEditorHideSaveModal() {
+    this.jsonEditorShowSaveModal = false;
+  }
+
+  async handleCostsLimitSave(enabled: boolean, maxDailyCostUsd: number | null, warningThreshold: number) {
+    return await handleCostsLimitSaveInternal(this, enabled, maxDailyCostUsd, warningThreshold);
+  }
+
   async handleExecApprovalDecision(decision: "allow-once" | "allow-always" | "deny") {
     const active = this.execApprovalQueue[0];
     if (!active || !this.client || this.execApprovalBusy) return;
@@ -448,6 +686,142 @@ export class OpenClawApp extends LitElement {
     } finally {
       this.execApprovalBusy = false;
     }
+  }
+
+  async handleInstallSkill(key: string) {
+    await handleInstallSkillInternal(this, key);
+  }
+
+  async handleUpdateSkill(key: string) {
+    await handleUpdateSkillInternal(this, key);
+  }
+
+  async handleToggleSkillEnabled(key: string, enabled: boolean) {
+    await handleToggleSkillEnabledInternal(this, key, enabled);
+  }
+
+  handleUpdateSkillEdit(key: string, value: string) {
+    handleUpdateSkillEditInternal(this, key, value);
+  }
+
+  async handleSaveSkillApiKey(key: string, apiKey: string) {
+    await handleSaveSkillApiKeyInternal(this, key);
+  }
+
+  async handleCronToggle(jobId: string, enabled: boolean) {
+    await handleCronToggleInternal(this, jobId, enabled);
+  }
+
+  async handleCronRun(jobId: string) {
+    await handleCronRunInternal(this, jobId);
+  }
+
+  async handleCronRemove(jobId: string) {
+    await handleCronRemoveInternal(this, jobId);
+  }
+
+  async handleCronAdd() {
+    await handleCronAddInternal(this);
+  }
+
+  async handleCronRunsLoad(jobId: string) {
+    await handleCronRunsLoadInternal(this, jobId);
+  }
+
+  handleCronFormUpdate(path: string, value: unknown) {
+    handleCronFormUpdateInternal(this, path, value);
+  }
+
+  async handleSessionsLoad() {
+    await handleSessionsLoadInternal(this);
+  }
+
+  async handleSessionsPatch(key: string, patch: unknown) {
+    await handleSessionsPatchInternal(this, key, patch);
+  }
+
+  async handleLoadNodes() {
+    await handleLoadNodesInternal(this);
+  }
+
+  async handleLoadPresence() {
+    await handleLoadPresenceInternal(this);
+  }
+
+  async handleLoadSkills() {
+    await handleLoadSkillsInternal(this);
+  }
+
+  async handleLoadDebug() {
+    await handleLoadDebugInternal(this);
+  }
+
+  async handleLoadLogs() {
+    await handleLoadLogsInternal(this);
+  }
+
+  async handleDebugCall() {
+    await handleDebugCallInternal(this);
+  }
+
+  async handleRunUpdate() {
+    await handleRunUpdateInternal(this);
+  }
+
+  setPassword(next: string) {
+    setPasswordInternal(this, next);
+  }
+
+  setSessionKey(next: string) {
+    setSessionKeyInternal(this, next);
+  }
+
+  setChatMessage(next: string) {
+    setChatMessageInternal(this, next);
+  }
+
+  async handleChatSend() {
+    await this.handleSendChat();
+  }
+
+  async handleChatAbort() {
+    await this.handleAbortChat();
+  }
+
+  handleChatSelectQueueItem(id: string) {
+    // Usually logic for selecting a queued item to edit or retry
+  }
+
+  handleChatDropQueueItem(id: string) {
+    this.removeQueuedMessage(id);
+  }
+
+  handleChatClearQueue() {
+    this.chatQueue = [];
+  }
+
+  handleLogsFilterChange(next: string) {
+    this.logsFilterText = next;
+  }
+
+  handleLogsLevelFilterToggle(level: import("./types").LogLevel) {
+    this.logsLevelFilters = {
+      ...this.logsLevelFilters,
+      [level]: !this.logsLevelFilters[level],
+    };
+  }
+
+  handleLogsAutoFollowToggle(next: boolean) {
+    this.logsAutoFollow = next;
+  }
+
+  async handleCallDebugMethod(method: string, params: string) {
+    await handleCallDebugMethodInternal(this, method, params);
+  }
+
+  async handleCostsLoad() {
+    const { loadCosts } = await import("./controllers/costs");
+    await loadCosts(this as any);
   }
 
   handleGatewayUrlConfirm() {

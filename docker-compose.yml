@@ -1,45 +1,247 @@
 services:
-  openclaw-gateway:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+  gateway:
+    image: openclaw-local:test
+    build:
+      context: .
+      args:
+        - CLAWDBOT_DOCKER_APT_PACKAGES=python3 curl
+    user: "0:0"
     ports:
-      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-    init: true
-    restart: unless-stopped
-    command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--bind",
-        "${OPENCLAW_GATEWAY_BIND:-lan}",
-        "--port",
-        "${OPENCLAW_GATEWAY_PORT:-18789}"
-      ]
-
-  openclaw-cli:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+      - "18789:18789"
     environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      BROWSER: echo
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      - HOME=/home/node #Define o diretório home do usuário node
+      - TERM=xterm-256color #Define o terminal como xterm-256color
+      - CLAWDBOT_GATEWAY_TOKEN=sua_chave_de_api_do_gateway #Define o token de autenticação do gateway
+      - CLAWDBOT_GATEWAY_PORT=18789 #Define a porta do gateway
+      - CLAWDBOT_BRIDGE_PORT=18790 #Define a porta da bridge
+      - CLAWDBOT_GATEWAY_BIND=lan #Define o bind do gateway
+      - CLAWDBOT_GATEWAY_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,10.0.1.13 #Proxies confiáveis
+      - CLAWDBOT_LOG_LEVEL=debug #Nível de log do gateway
+      # ============================================
+      # --- Configuração de Chaves de IA ---
+      # ============================================
+      - OPENAI_API_KEY=sua_chave_de_api_da_openai #Sua chave de API da OpenAI
+      - OPENAI_MODEL=gpt-4o-mini #Modelo principal da OpenAI (ex: gpt-4o, gpt-4-turbo, gpt-4o-mini)
+      - GEMINI_API_KEY=sua_chave_de_api_do_gemini #Sua chave de API do Gemini
+      - ANTHROPIC_API_KEY=sua_chave_de_api_da_anthropic #Sua chave de API da Anthropic
+      - BRAVE_API_KEY=sua_chave_de_api_da_brave #Sua chave de API da Brave
+      # ============================================
+      # --- Whitelist de Domínios ---
+      # ============================================
+      # Restringe o acesso do agente a apenas sites/domínios autorizados
+      # Use '*' para permitir todos ou liste domínios separados por vírgula (ex: google.com,github.com,stackoverflow.com)
+      - ALLOWED_DOMAINS=* #Domínios permitidos para navegação, busca e fetch - Deixe * para todos
+      # ============================================
+      # --- Configuração de TTS ---
+      # ============================================
+      - TTS_AUTO_MODE=off #Define se o bot envia áudio automaticamente ("off"|"always"|"inbound"|"tagged)
+      - ELEVENLABS_API_KEY=sua_chave_de_api_da_elevenlabs #Sua chave de API da ElevenLabs
+      # ============================================
+      # --- Configuração Telegram ---
+      # ============================================
+      - TELEGRAM_BOT_TOKEN=sua_chave_de_api_do_telegram #Token do bot obtido via @BotFather (ex: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ)
+      - TELEGRAM_ALLOWED_USERS=seu_id_de_usuario_telegram #IDs de usuários permitidos - Deixe * para permitir todos (ex: 123456789,987654321)
+      - TELEGRAM_DM_POLICY=allowlist #Política de DMs: disabled=Bloqueia todas, allowlist=Permite apenas IDs autorizados
+      - TELEGRAM_GROUP_POLICY=allowlist #Política de grupos: disabled=Ignora grupos, allowlist=Permite apenas grupos autorizados
+      - TELEGRAM_ALLOWED_GROUPS= #IDs de grupos permitidos - Deixe * para permitir todos
+      - TELEGRAM_HISTORY_LIMIT=50 #Limite de mensagens para contexto em grupos
+      - TELEGRAM_DM_HISTORY_LIMIT=10 #Limite de mensagens de contexto em DMs
+      - TELEGRAM_MEDIA_MAX_MB=50 #Limite de tamanho para download de mídias recebidas
+      - TELEGRAM_TEXT_CHUNK_LIMIT=4096 #Limite de caracteres por mensagem enviada (máximo do Telegram)
+      - TELEGRAM_CONFIG_WRITES=true #Permite ou bloqueia alteração de config via comandos no Telegram
+      - TELEGRAM_MESSAGE_PREFIX= #Prefixo nas mensagens enviadas pelo bot
+      # ============================================
+      # --- Configuração WhatsApp ---
+      # ============================================
+      - WHATSAPP_ALLOWED_NUMBER=seu_numero_de_telefone #Número de telefone autorizado a usar o bot  - Deixe * para permitir todos
+      - WHATSAPP_DM_POLICY=allowlist #Política de DMs: disabled=Bloqueia todas, allowlist=Permite apenas números autorizados
+      - WHATSAPP_SELF_CHAT=false #Define se o bot deve responder a si mesmo (útil para testes no próprio número)
+      - WHATSAPP_READ_RECEIPTS=true #Define se o bot deve enviar confirmação de leitura
+      - WHATSAPP_ACK_EMOJI=👀 #Define o emoji que o bot deve usar para confirmar leitura
+      - WHATSAPP_GROUP_POLICY=allowlist #Define se o bot deve responder em grupos
+      - WHATSAPP_ACTIVATION=mention #Define se o bot responde a tudo no grupo (always) ou apenas quando mencionado (mention)
+      - WHATSAPP_HISTORY_LIMIT=50 #Limite de mensagens para contexto em grupos
+      - WHATSAPP_MEDIA_MAX_MB=50 #Limite de tamanho para download de mídias recebidas
+      - WHATSAPP_TEXT_CHUNK_LIMIT=4000 #Limite de caracteres por mensagem enviada
+      - WHATSAPP_CONFIG_WRITES=true #Permite ou bloqueia alteração de config via comandos no WhatsApp
+      - WHATSAPP_MESSAGE_PREFIX= #Prefixo nas mensagens enviadas pelo bot
+      - WHATSAPP_INBOUND_PREFIX= #Prefixo nas mensagens recebidas pelo bot (visto pela IA)
+      - WHATSAPP_CHUNK_MODE=newline #Modo de divisão de mensagens longas
+      - WHATSAPP_DM_HISTORY_LIMIT=10 #Limite de mensagens de contexto em DMs
+      - WHATSAPP_ALLOW_REACTIONS=true #Permite que o bot use a ferramenta de reação
+      # ============================================
+      # --- Configurações Gerais ---
+      # ============================================
+      - WEB_HEARTBEAT_SECONDS=60 #Frequência de verificação da conexão (segundos)
+      # ============================================
+      # --- Configurações de Conexão WhatsApp ---
+      # ============================================
+      # ⚠️ IMPORTANTE: Valores alinhados com Whaileys defaults para máxima estabilidade
+      - CLAWDBOT_WA_CONNECT_TIMEOUT=20000 #Timeout de conexão WebSocket (20s - Whaileys default)
+      - CLAWDBOT_WA_QUERY_TIMEOUT=60000 #Timeout de queries ao WhatsApp (60s - Whaileys default)
+      - CLAWDBOT_WA_QR_TIMEOUT=60000 #Timeout do QR Code (60s)
+      - CLAWDBOT_WA_KEEPALIVE=15000 #Keep-alive crítico (15s - Whaileys default) ⚠️ NÃO AUMENTAR
+      - CLAWDBOT_WA_RETRY_DELAY=250 #Delay entre retries (250ms - Whaileys default) - Reconexão rápida
+      # ============================================
+      # --- Navegador Simulado (Anti-Ban) ---
+      # ============================================
+      - CLAWDBOT_BROWSER_OS=Mac OS #Define o sistema operacional do navegador simulado
+      - CLAWDBOT_BROWSER_NAME=Chrome #Define o nome do navegador simulado
+      - CLAWDBOT_BROWSER_VERSION=121.0.6167.85 #Define a versão do navegador simulado
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-    stdin_open: true
-    tty: true
-    init: true
-    entrypoint: ["node", "dist/index.js"]
+      - moltbot_config:/home/node/.openclaw
+      - moltbot_workspace:/home/node/clawd
+    command:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /home/node/.openclaw
+        if [ ! -f /home/node/.openclaw/openclaw.json ]; then
+          echo "⚠️  openclaw.json não encontrado. Criando arquivo com valores padrão..."
+          # Gera o JSON de configuração apenas se não existir
+          cat <<EOF > /home/node/.openclaw/openclaw.json
+        {
+          "gateway": {
+            "mode": "local",
+            "controlUi": { "allowInsecureAuth": true }
+          },
+          "web": {
+            "heartbeatSeconds": $${WEB_HEARTBEAT_SECONDS},
+            "reconnect": {
+              "initialMs": 1000,
+              "maxMs": 60000,
+              "factor": 2.0,
+              "jitter": 0.1,
+              "maxAttempts": 20
+            }
+          },
+          "commands": {
+            "bash": true,
+            "config": true
+          },
+          "agents": {
+            "list": [
+              { 
+                "id": "main", 
+                "name": "Moltbot", 
+                "model": "openai/$${OPENAI_MODEL}",
+                "tools": {
+                  "profile": "full",
+                  "allow": ["weather", "openai-whisper-api", "openai-image-gen"]
+                }
+              }
+            ]
+          },
+          "models": {
+            "providers": {
+              "openai": {
+                "baseUrl": "https://api.openai.com/v1",
+                "apiKey": "$${OPENAI_API_KEY}",
+                "models": [{ "id": "$${OPENAI_MODEL}", "name": "OpenAI Model" }]
+              },
+              "google": {
+                "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+                "apiKey": "$${GEMINI_API_KEY}",
+                "models": [{ "id": "gemini-3-flash-preview", "name": "Gemini 3 Flash" }]
+              },
+              "anthropic": {
+                "baseUrl": "https://api.anthropic.com/v1",
+                "apiKey": "$${ANTHROPIC_API_KEY}",
+                "models": [{ "id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5" }]
+              }
+            }
+          },
+          "tools": {
+            "web": {
+              "search": {
+                "provider": "brave",
+                "apiKey": "$${BRAVE_API_KEY}"
+              }
+            },
+            "media": {
+              "audio": {
+                "enabled": true,
+                "models": [
+                  { "provider": "openai", "model": "whisper-1" }
+                ]
+              }
+            }
+          },
+          "messages": {
+            "responsePrefix": "$${TELEGRAM_MESSAGE_PREFIX}",
+            "tts": {
+              "provider": "openai",
+              "auto": "$${TTS_AUTO_MODE}"
+            }
+          },
+          "usage": {
+            "dailyLimit": {
+              "enabled": true,
+              "maxDailyCostUsd": 0.002,
+              "warningThreshold": 50
+            }
+          },
+          "channels": {
+            "telegram": {
+              "enabled": true,
+              "botToken": "$${TELEGRAM_BOT_TOKEN}",
+              "dmPolicy": "$${TELEGRAM_DM_POLICY}",
+              "allowFrom": ["$${TELEGRAM_ALLOWED_USERS}"],
+              "groupPolicy": "$${TELEGRAM_GROUP_POLICY}",
+              "groupAllowFrom": ["$${TELEGRAM_ALLOWED_GROUPS}"],
+              "historyLimit": $${TELEGRAM_HISTORY_LIMIT},
+              "dmHistoryLimit": $${TELEGRAM_DM_HISTORY_LIMIT},
+              "mediaMaxMb": $${TELEGRAM_MEDIA_MAX_MB},
+              "textChunkLimit": $${TELEGRAM_TEXT_CHUNK_LIMIT},
+              "configWrites": $${TELEGRAM_CONFIG_WRITES}
+            },
+            "whatsapp": {
+              "accounts": {
+                "default": {
+                  "name": "Moltbot",
+                  "enabled": true,
+                  "selfChatMode": $${WHATSAPP_SELF_CHAT},
+                  "sendReadReceipts": $${WHATSAPP_READ_RECEIPTS},
+                  "dmPolicy": "$${WHATSAPP_DM_POLICY}",
+                  "allowFrom": ["$${WHATSAPP_ALLOWED_NUMBER}"],
+                  "groupPolicy": "$${WHATSAPP_GROUP_POLICY}",
+                  "ackReaction": {
+                    "emoji": "$${WHATSAPP_ACK_EMOJI}",
+                    "direct": true,
+                    "group": "mentions"
+                  }
+                }
+              },
+              "dmPolicy": "$${WHATSAPP_DM_POLICY}",
+              "allowFrom": ["$${WHATSAPP_ALLOWED_NUMBER}"],
+              "selfChatMode": $${WHATSAPP_SELF_CHAT},
+              "sendReadReceipts": $${WHATSAPP_READ_RECEIPTS},
+              "groupPolicy": "$${WHATSAPP_GROUP_POLICY}",
+              "historyLimit": $${WHATSAPP_HISTORY_LIMIT},
+              "mediaMaxMb": $${WHATSAPP_MEDIA_MAX_MB},
+              "textChunkLimit": $${WHATSAPP_TEXT_CHUNK_LIMIT},
+              "chunkMode": "$${WHATSAPP_CHUNK_MODE}",
+              "dmHistoryLimit": $${WHATSAPP_DM_HISTORY_LIMIT},
+              "messagePrefix": "$${WHATSAPP_INBOUND_PREFIX}",
+              "configWrites": $${WHATSAPP_CONFIG_WRITES},
+              "actions": {
+                "reactions": $${WHATSAPP_ALLOW_REACTIONS}
+              },
+              "ackReaction": {
+                "emoji": "$${WHATSAPP_ACK_EMOJI}",
+                "direct": true,
+                "group": "mentions"
+              }
+            }
+          }
+        }
+        EOF
+          echo "✅  Arquivo openclaw.json criado com sucesso!"
+        else
+          echo "ℹ️  Arquivo openclaw.json já existe. Mantendo configuração atual."
+        fi
+        exec node dist/index.js gateway --bind lan --port 18789 --allow-unconfigured --verbose
+
+volumes:
+  moltbot_config:
+  moltbot_workspace:

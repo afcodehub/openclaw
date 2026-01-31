@@ -55,11 +55,11 @@ export async function sendChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
-): Promise<boolean> {
-  if (!state.client || !state.connected) return false;
+): Promise<string | null> {
+  if (!state.client || !state.connected) return null;
   const msg = message.trim();
   const hasAttachments = attachments && attachments.length > 0;
-  if (!msg && !hasAttachments) return false;
+  if (!msg && !hasAttachments) return null;
 
   const now = Date.now();
 
@@ -97,16 +97,16 @@ export async function sendChatMessage(
   // Convert attachments to API format
   const apiAttachments = hasAttachments
     ? attachments
-        .map((att) => {
-          const parsed = dataUrlToBase64(att.dataUrl);
-          if (!parsed) return null;
-          return {
-            type: "image",
-            mimeType: parsed.mimeType,
-            content: parsed.content,
-          };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null)
+      .map((att) => {
+        const parsed = dataUrlToBase64(att.dataUrl);
+        if (!parsed) return null;
+        return {
+          type: "image",
+          mimeType: parsed.mimeType,
+          content: parsed.content,
+        };
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null)
     : undefined;
 
   try {
@@ -117,22 +117,36 @@ export async function sendChatMessage(
       idempotencyKey: runId,
       attachments: apiAttachments,
     });
-    return true;
+    return runId;
   } catch (err) {
     const error = String(err);
     state.chatRunId = null;
     state.chatStream = null;
     state.chatStreamStartedAt = null;
-    state.lastError = error;
+
+    // Tratamento especial para limite diário excedido
+    const isDailyLimitError = error.includes("DAILY_LIMIT_EXCEEDED") || error.includes("Limite diário");
+
+    if (isDailyLimitError) {
+      state.lastError = "⚠️ LIMITE DIÁRIO ATINGIDO: Você atingiu o limite de gastos configurado. O agente está bloqueado até amanhã ou até que o limite seja aumentado nas configurações.";
+    } else {
+      state.lastError = error;
+    }
+
     state.chatMessages = [
       ...state.chatMessages,
       {
         role: "assistant",
-        content: [{ type: "text", text: "Error: " + error }],
+        content: [{
+          type: "text",
+          text: isDailyLimitError
+            ? "⚠️ **Limite Diário Atingido**\n\nVocê atingiu o limite de gastos configurado. O agente está bloqueado até amanhã ou até que o limite seja aumentado.\n\nPara ajustar o limite, acesse a aba **Custos** e configure um novo valor."
+            : "Error: " + error
+        }],
         timestamp: Date.now(),
       },
     ];
-    return false;
+    return null;
   } finally {
     state.chatSending = false;
   }

@@ -16,6 +16,8 @@ import {
   stopNodesPolling,
   startDebugPolling,
   stopDebugPolling,
+  startWhatsAppPolling,
+  stopWhatsAppPolling,
 } from "./app-polling";
 
 type LifecycleHost = {
@@ -49,6 +51,9 @@ export function handleConnected(host: LifecycleHost) {
     host as unknown as Parameters<typeof attachThemeListener>[0],
   );
   window.addEventListener("popstate", host.popStateHandler);
+  document.addEventListener("close-modal", () => {
+    (host as any).whatsappConfigSaved = false;
+  });
   connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
   startNodesPolling(host as unknown as Parameters<typeof startNodesPolling>[0]);
   if (host.tab === "logs") {
@@ -56,6 +61,9 @@ export function handleConnected(host: LifecycleHost) {
   }
   if (host.tab === "debug") {
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
+  }
+  if (host.tab === "whatsapp") {
+    startWhatsAppPolling(host as unknown as Parameters<typeof startWhatsAppPolling>[0]);
   }
 }
 
@@ -65,9 +73,13 @@ export function handleFirstUpdated(host: LifecycleHost) {
 
 export function handleDisconnected(host: LifecycleHost) {
   window.removeEventListener("popstate", host.popStateHandler);
+  document.removeEventListener("close-modal", () => {
+    (host as any).whatsappConfigSaved = false;
+  });
   stopNodesPolling(host as unknown as Parameters<typeof stopNodesPolling>[0]);
   stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
   stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+  stopWhatsAppPolling(host as unknown as Parameters<typeof stopWhatsAppPolling>[0]);
   detachThemeListener(
     host as unknown as Parameters<typeof detachThemeListener>[0],
   );

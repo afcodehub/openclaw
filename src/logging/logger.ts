@@ -153,6 +153,7 @@ export function toPinoLikeLogger(logger: TsLogger<LogObj>, level: LogLevel): Pin
     warn: (...args: unknown[]) => logger.warn(...args),
     error: (...args: unknown[]) => logger.error(...args),
     fatal: (...args: unknown[]) => logger.fatal(...args),
+    silent: () => { },
   };
 }
 
@@ -165,6 +166,7 @@ export type PinoLikeLogger = {
   warn: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
   fatal: (...args: unknown[]) => void;
+  silent: () => void;
 };
 
 export function getResolvedLoggerSettings(): LoggerResolvedSettings {

@@ -4,7 +4,7 @@ import readline from "node:readline";
 
 import type { NormalizedUsage, UsageLike } from "../agents/usage.js";
 import { normalizeUsage } from "../agents/usage.js";
-import type { OpenClawConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import {
   resolveSessionFilePath,
@@ -176,7 +176,8 @@ export async function loadCostUsageSummary(params?: {
   const days = Math.max(1, Math.floor(params?.days ?? 30));
   const now = new Date();
   const since = new Date(now);
-  since.setDate(since.getDate() - (days - 1));
+  since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0); // Começar do início do dia
   const sinceTime = since.getTime();
 
   const dailyMap = new Map<string, CostUsageTotals>();

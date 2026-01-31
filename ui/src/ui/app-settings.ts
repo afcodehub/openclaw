@@ -14,7 +14,7 @@ import { saveSettings, type UiSettings } from "./storage";
 import { resolveTheme, type ResolvedTheme, type ThemeMode } from "./theme";
 import { startThemeTransition, type ThemeTransitionContext } from "./theme-transition";
 import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll";
-import { startLogsPolling, stopLogsPolling, startDebugPolling, stopDebugPolling } from "./app-polling";
+import { startLogsPolling, stopLogsPolling, startDebugPolling, stopDebugPolling, startWhatsAppPolling, stopWhatsAppPolling } from "./app-polling";
 import { refreshChat } from "./app-chat";
 import type { OpenClawApp } from "./app";
 
@@ -33,6 +33,7 @@ type SettingsHost = {
   basePath: string;
   themeMedia: MediaQueryList | null;
   themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
+  password: string;
   pendingGatewayUrl?: string | null;
 };
 
@@ -120,6 +121,9 @@ export function setTab(host: SettingsHost, next: Tab) {
   if (next === "debug")
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
   else stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+  if (next === "whatsapp")
+    startWhatsAppPolling(host as unknown as Parameters<typeof startWhatsAppPolling>[0]);
+  else stopWhatsAppPolling(host as unknown as Parameters<typeof stopWhatsAppPolling>[0]);
   void refreshActiveTab(host);
   syncUrlWithTab(host, next, false);
 }
@@ -145,6 +149,20 @@ export function setTheme(
 export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "overview") await loadOverview(host);
   if (host.tab === "channels") await loadChannelsTab(host);
+  if (host.tab === "whatsapp") await loadChannelsTab(host);
+  if (host.tab === "jsoneditor") {
+    if ((host as any).handleJsonEditorLoad) {
+      await (host as any).handleJsonEditorLoad();
+    }
+  }
+  if (host.tab === "costs") {
+    const { loadCosts } = await import("./controllers/costs");
+    await loadCosts(host as any);
+  }
+  if (host.tab === "workspace") {
+    const { loadWorkspaceFiles } = await import("./controllers/workspace");
+    await loadWorkspaceFiles(host as any);
+  }
   if (host.tab === "instances") await loadPresence(host as unknown as OpenClawApp);
   if (host.tab === "sessions") await loadSessions(host as unknown as OpenClawApp);
   if (host.tab === "cron") await loadCron(host);
@@ -268,6 +286,9 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
   if (next === "debug")
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
   else stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+  if (next === "whatsapp")
+    startWhatsAppPolling(host as unknown as Parameters<typeof startWhatsAppPolling>[0]);
+  else stopWhatsAppPolling(host as unknown as Parameters<typeof stopWhatsAppPolling>[0]);
   if (host.connected) void refreshActiveTab(host);
 }
 

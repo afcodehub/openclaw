@@ -528,6 +528,19 @@ export const OpenClawSchema = z
       })
       .strict()
       .optional(),
+    usage: z
+      .object({
+        dailyLimit: z
+          .object({
+            enabled: z.boolean().optional(),
+            maxDailyCostUsd: z.number().positive().optional(),
+            warningThreshold: z.number().min(0).max(100).optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((cfg, ctx) => {
