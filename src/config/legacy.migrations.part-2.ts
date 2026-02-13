@@ -18,7 +18,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
       const agentRoot = getRecord(raw.agent);
       const defaults = getRecord(getRecord(raw.agents)?.defaults);
       const agent = agentRoot ?? defaults;
-      if (!agent) return;
+      if (!agent) {
+        return;
+      }
       const label = agentRoot ? "agent" : "agents.defaults";
 
       const legacyModel = typeof agent.model === "string" ? String(agent.model) : undefined;
@@ -45,7 +47,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
         legacyModelFallbacks.length > 0 ||
         legacyImageModelFallbacks.length > 0 ||
         Object.keys(legacyAliases).length > 0;
-      if (!hasLegacy) return;
+      if (!hasLegacy) {
+        return;
+      }
 
       const models =
         agent.models && typeof agent.models === "object"
@@ -53,26 +57,44 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
           : {};
 
       const ensureModel = (rawKey?: string) => {
-        if (typeof rawKey !== "string") return;
+        if (typeof rawKey !== "string") {
+          return;
+        }
         const key = rawKey.trim();
-        if (!key) return;
-        if (!models[key]) models[key] = {};
+        if (!key) {
+          return;
+        }
+        if (!models[key]) {
+          models[key] = {};
+        }
       };
 
       ensureModel(legacyModel);
       ensureModel(legacyImageModel);
-      for (const key of legacyAllowed) ensureModel(key);
-      for (const key of legacyModelFallbacks) ensureModel(key);
-      for (const key of legacyImageModelFallbacks) ensureModel(key);
+      for (const key of legacyAllowed) {
+        ensureModel(key);
+      }
+      for (const key of legacyModelFallbacks) {
+        ensureModel(key);
+      }
+      for (const key of legacyImageModelFallbacks) {
+        ensureModel(key);
+      }
       for (const target of Object.values(legacyAliases)) {
-        if (typeof target !== "string") continue;
+        if (typeof target !== "string") {
+          continue;
+        }
         ensureModel(target);
       }
 
       for (const [alias, targetRaw] of Object.entries(legacyAliases)) {
-        if (typeof targetRaw !== "string") continue;
+        if (typeof targetRaw !== "string") {
+          continue;
+        }
         const target = targetRaw.trim();
-        if (!target) continue;
+        if (!target) {
+          continue;
+        }
         const entry =
           models[target] && typeof models[target] === "object"
             ? (models[target] as Record<string, unknown>)
@@ -159,7 +181,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
     describe: "Move routing.agents/defaultAgentId to agents.list",
     apply: (raw, changes) => {
       const routing = getRecord(raw.routing);
-      if (!routing) return;
+      if (!routing) {
+        return;
+      }
 
       const routingAgents = getRecord(routing.agents);
       const agents = ensureRecord(raw, "agents");
@@ -169,7 +193,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
         for (const [rawId, entryRaw] of Object.entries(routingAgents)) {
           const agentId = String(rawId ?? "").trim();
           const entry = getRecord(entryRaw);
-          if (!agentId || !entry) continue;
+          if (!agentId || !entry) {
+            continue;
+          }
 
           const target = ensureAgentEntry(list, agentId);
           const entryCopy: Record<string, unknown> = { ...entry };
@@ -251,7 +277,9 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
     describe: "Move routing bindings/groupChat/queue/agentToAgent/transcribeAudio",
     apply: (raw, changes) => {
       const routing = getRecord(raw.routing);
-      if (!routing) return;
+      if (!routing) {
+        return;
+      }
 
       if (routing.bindings !== undefined) {
         if (raw.bindings === undefined) {
@@ -341,39 +369,52 @@ export const LEGACY_CONFIG_MIGRATIONS_PART_2: LegacyConfigMigration[] = [
             changes.push("Removed routing.transcribeAudio (tools.media.audio.models already set).");
           }
         } else {
-          changes.push("Removed routing.transcribeAudio (unsupported transcription CLI).");
+          changes.push("Removed routing.transcribeAudio (invalid or empty command).");
         }
         delete routing.transcribeAudio;
       }
 
-      const audio = getRecord(raw.audio);
-      if (audio?.transcription !== undefined) {
-        const mapped = mapLegacyAudioTranscription(audio.transcription);
-        if (mapped) {
-          const tools = ensureRecord(raw, "tools");
-          const media = ensureRecord(tools, "media");
-          const mediaAudio = ensureRecord(media, "audio");
-          const models = Array.isArray(mediaAudio.models) ? (mediaAudio.models as unknown[]) : [];
-          if (models.length === 0) {
-            mediaAudio.enabled = true;
-            mediaAudio.models = [mapped];
-            changes.push("Moved audio.transcription → tools.media.audio.models.");
-          } else {
-            changes.push("Removed audio.transcription (tools.media.audio.models already set).");
-          }
-          delete audio.transcription;
-          if (Object.keys(audio).length === 0) delete raw.audio;
-          else raw.audio = audio;
-        } else {
-          delete audio.transcription;
-          changes.push("Removed audio.transcription (unsupported transcription CLI).");
-          if (Object.keys(audio).length === 0) delete raw.audio;
-          else raw.audio = audio;
-        }
-      }
-
       if (Object.keys(routing).length === 0) {
         delete raw.routing;
+      }
+    },
+  },
+  {
+    id: "audio.transcription-v2",
+    describe: "Move audio.transcription to tools.media.audio.models",
+    apply: (raw, changes) => {
+      const audio = getRecord(raw.audio);
+      if (audio?.transcription === undefined) {
+        return;
+      }
+
+      const mapped = mapLegacyAudioTranscription(audio.transcription);
+      if (mapped) {
+        const tools = ensureRecord(raw, "tools");
+        const media = ensureRecord(tools, "media");
+        const mediaAudio = ensureRecord(media, "audio");
+        const models = Array.isArray(mediaAudio.models) ? (mediaAudio.models as unknown[]) : [];
+        if (models.length === 0) {
+          mediaAudio.enabled = true;
+          mediaAudio.models = [mapped];
+          changes.push("Moved audio.transcription → tools.media.audio.models.");
+        } else {
+          changes.push("Removed audio.transcription (tools.media.audio.models already set).");
+        }
+        delete audio.transcription;
+        if (Object.keys(audio).length === 0) {
+          delete raw.audio;
+        } else {
+          raw.audio = audio;
+        }
+      } else {
+        delete audio.transcription;
+        changes.push("Removed audio.transcription (invalid or empty command).");
+        if (Object.keys(audio).length === 0) {
+          delete raw.audio;
+        } else {
+          raw.audio = audio;
+        }
       }
     },
   },

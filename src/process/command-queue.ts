@@ -1,5 +1,16 @@
-import { CommandLane } from "./lanes.js";
 import { diagnosticLogger as diag, logLaneDequeue, logLaneEnqueue } from "../logging/diagnostic.js";
+import { CommandLane } from "./lanes.js";
+/**
+ * Dedicated error type thrown when a queued command is rejected because
+ * its lane was cleared.  Callers that fire-and-forget enqueued tasks can
+ * catch (or ignore) this specific type to avoid unhandled-rejection noise.
+ */
+export class CommandLaneClearedError extends Error {
+  constructor(lane?: string) {
+    super(lane ? `Command lane "${lane}" cleared` : "Command lane cleared");
+    this.name = "CommandLaneClearedError";
+  }
+}
 
 // Minimal in-process queue to serialize command executions.
 // Default lane ("main") preserves the existing behavior. Additional lanes allow
@@ -19,19 +30,24 @@ type LaneState = {
   lane: string;
   queue: QueueEntry[];
   active: number;
+  activeTaskIds: Set<number>;
   maxConcurrent: number;
   draining: boolean;
 };
 
 const lanes = new Map<string, LaneState>();
+let nextTaskId = 1;
 
 function getLaneState(lane: string): LaneState {
   const existing = lanes.get(lane);
-  if (existing) return existing;
+  if (existing) {
+    return existing;
+  }
   const created: LaneState = {
     lane,
     queue: [],
     active: 0,
+    activeTaskIds: new Set(),
     maxConcurrent: 1,
     draining: false,
   };
@@ -41,7 +57,9 @@ function getLaneState(lane: string): LaneState {
 
 function drainLane(lane: string) {
   const state = getLaneState(lane);
-  if (state.draining) return;
+  if (state.draining) {
+    return;
+  }
   state.draining = true;
 
   const pump = () => {
@@ -55,12 +73,15 @@ function drainLane(lane: string) {
         );
       }
       logLaneDequeue(lane, waitedMs, state.queue.length);
+      const taskId = nextTaskId++;
       state.active += 1;
+      state.activeTaskIds.add(taskId);
       void (async () => {
         const startTime = Date.now();
         try {
           const result = await entry.task();
           state.active -= 1;
+          state.activeTaskIds.delete(taskId);
           diag.debug(
             `lane task done: lane=${lane} durationMs=${Date.now() - startTime} active=${state.active} queued=${state.queue.length}`,
           );
@@ -68,6 +89,7 @@ function drainLane(lane: string) {
           entry.resolve(result);
         } catch (err) {
           state.active -= 1;
+          state.activeTaskIds.delete(taskId);
           const isProbeLane = lane.startsWith("auth-probe:") || lane.startsWith("session:probe-");
           if (!isProbeLane) {
             diag.error(
@@ -130,7 +152,9 @@ export function enqueueCommand<T>(
 export function getQueueSize(lane: string = CommandLane.Main) {
   const resolved = lane.trim() || CommandLane.Main;
   const state = lanes.get(resolved);
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   return state.queue.length + state.active;
 }
 
@@ -145,8 +169,78 @@ export function getTotalQueueSize() {
 export function clearCommandLane(lane: string = CommandLane.Main) {
   const cleaned = lane.trim() || CommandLane.Main;
   const state = lanes.get(cleaned);
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   const removed = state.queue.length;
-  state.queue.length = 0;
+  const pending = state.queue.splice(0);
+  for (const entry of pending) {
+    entry.reject(new CommandLaneClearedError(cleaned));
+  }
   return removed;
+}
+
+/**
+ * Returns the total number of actively executing tasks across all lanes
+ * (excludes queued-but-not-started entries).
+ */
+export function getActiveTaskCount(): number {
+  let total = 0;
+  for (const s of lanes.values()) {
+    total += s.active;
+  }
+  return total;
+}
+
+/**
+ * Wait for all currently active tasks across all lanes to finish.
+ * Polls at a short interval; resolves when no tasks are active or
+ * when `timeoutMs` elapses (whichever comes first).
+ *
+ * New tasks enqueued after this call are ignored — only tasks that are
+ * already executing are waited on.
+ */
+export function waitForActiveTasks(timeoutMs: number): Promise<{ drained: boolean }> {
+  // Keep shutdown/drain checks responsive without busy looping.
+  const POLL_INTERVAL_MS = 50;
+  const deadline = Date.now() + timeoutMs;
+  const activeAtStart = new Set<number>();
+  for (const state of lanes.values()) {
+    for (const taskId of state.activeTaskIds) {
+      activeAtStart.add(taskId);
+    }
+  }
+
+  return new Promise((resolve) => {
+    const check = () => {
+      if (activeAtStart.size === 0) {
+        resolve({ drained: true });
+        return;
+      }
+
+      let hasPending = false;
+      for (const state of lanes.values()) {
+        for (const taskId of state.activeTaskIds) {
+          if (activeAtStart.has(taskId)) {
+            hasPending = true;
+            break;
+          }
+        }
+        if (hasPending) {
+          break;
+        }
+      }
+
+      if (!hasPending) {
+        resolve({ drained: true });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve({ drained: false });
+        return;
+      }
+      setTimeout(check, POLL_INTERVAL_MS);
+    };
+    check();
+  });
 }

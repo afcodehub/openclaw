@@ -1,15 +1,27 @@
-import { getOAuthApiKey, type OAuthCredentials, type OAuthProvider } from "@mariozechner/pi-ai";
-import lockfile from "proper-lockfile";
-
+import {
+  getOAuthApiKey,
+  getOAuthProviders,
+  type OAuthCredentials,
+  type OAuthProvider,
+} from "@mariozechner/pi-ai";
 import type { OpenClawConfig } from "../../config/config.js";
-import { refreshChutesTokens } from "../chutes-oauth.js";
+import type { AuthProfileStore } from "./types.js";
+import { withFileLock } from "../../infra/file-lock.js";
 import { refreshQwenPortalCredentials } from "../../providers/qwen-portal-oauth.js";
+import { refreshChutesTokens } from "../chutes-oauth.js";
 import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
 import { formatAuthDoctorHint } from "./doctor.js";
 import { ensureAuthStoreFile, resolveAuthStorePath } from "./paths.js";
 import { suggestOAuthProfileIdForLegacyDefault } from "./repair.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./store.js";
-import type { AuthProfileStore } from "./types.js";
+
+const OAUTH_PROVIDER_IDS = new Set<string>(getOAuthProviders().map((provider) => provider.id));
+
+const isOAuthProvider = (provider: string): provider is OAuthProvider =>
+  OAUTH_PROVIDER_IDS.has(provider);
+
+const resolveOAuthProvider = (provider: string): OAuthProvider | null =>
+  isOAuthProvider(provider) ? provider : null;
 
 function buildOAuthApiKey(provider: string, credentials: OAuthCredentials): string {
   const needsProjectId = provider === "google-gemini-cli" || provider === "google-antigravity";
@@ -28,15 +40,12 @@ async function refreshOAuthTokenWithLock(params: {
   const authPath = resolveAuthStorePath(params.agentDir);
   ensureAuthStoreFile(authPath);
 
-  let release: (() => Promise<void>) | undefined;
-  try {
-    release = await lockfile.lock(authPath, {
-      ...AUTH_STORE_LOCK_OPTIONS,
-    });
-
+  return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
     const store = ensureAuthProfileStore(params.agentDir);
     const cred = store.profiles[params.profileId];
-    if (!cred || cred.type !== "oauth") return null;
+    if (!cred || cred.type !== "oauth") {
+      return null;
+    }
 
     if (Date.now() < cred.expires) {
       return {
@@ -62,8 +71,16 @@ async function refreshOAuthTokenWithLock(params: {
               const newCredentials = await refreshQwenPortalCredentials(cred);
               return { apiKey: newCredentials.access, newCredentials };
             })()
-          : await getOAuthApiKey(cred.provider as OAuthProvider, oauthCreds);
-    if (!result) return null;
+          : await (async () => {
+              const oauthProvider = resolveOAuthProvider(cred.provider);
+              if (!oauthProvider) {
+                return null;
+              }
+              return await getOAuthApiKey(oauthProvider, oauthCreds);
+            })();
+    if (!result) {
+      return null;
+    }
     store.profiles[params.profileId] = {
       ...cred,
       ...result.newCredentials,
@@ -72,15 +89,7 @@ async function refreshOAuthTokenWithLock(params: {
     saveAuthProfileStore(store, params.agentDir);
 
     return result;
-  } finally {
-    if (release) {
-      try {
-        await release();
-      } catch {
-        // ignore unlock errors
-      }
-    }
-  }
+  });
 }
 
 async function tryResolveOAuthProfile(params: {
@@ -91,10 +100,16 @@ async function tryResolveOAuthProfile(params: {
 }): Promise<{ apiKey: string; provider: string; email?: string } | null> {
   const { cfg, store, profileId } = params;
   const cred = store.profiles[profileId];
-  if (!cred || cred.type !== "oauth") return null;
+  if (!cred || cred.type !== "oauth") {
+    return null;
+  }
   const profileConfig = cfg?.auth?.profiles?.[profileId];
-  if (profileConfig && profileConfig.provider !== cred.provider) return null;
-  if (profileConfig && profileConfig.mode !== cred.type) return null;
+  if (profileConfig && profileConfig.provider !== cred.provider) {
+    return null;
+  }
+  if (profileConfig && profileConfig.mode !== cred.type) {
+    return null;
+  }
 
   if (Date.now() < cred.expires) {
     return {
@@ -108,7 +123,9 @@ async function tryResolveOAuthProfile(params: {
     profileId,
     agentDir: params.agentDir,
   });
-  if (!refreshed) return null;
+  if (!refreshed) {
+    return null;
+  }
   return {
     apiKey: refreshed.apiKey,
     provider: cred.provider,
@@ -124,20 +141,32 @@ export async function resolveApiKeyForProfile(params: {
 }): Promise<{ apiKey: string; provider: string; email?: string } | null> {
   const { cfg, store, profileId } = params;
   const cred = store.profiles[profileId];
-  if (!cred) return null;
+  if (!cred) {
+    return null;
+  }
   const profileConfig = cfg?.auth?.profiles?.[profileId];
-  if (profileConfig && profileConfig.provider !== cred.provider) return null;
+  if (profileConfig && profileConfig.provider !== cred.provider) {
+    return null;
+  }
   if (profileConfig && profileConfig.mode !== cred.type) {
     // Compatibility: treat "oauth" config as compatible with stored token profiles.
-    if (!(profileConfig.mode === "oauth" && cred.type === "token")) return null;
+    if (!(profileConfig.mode === "oauth" && cred.type === "token")) {
+      return null;
+    }
   }
 
   if (cred.type === "api_key") {
-    return { apiKey: cred.key, provider: cred.provider, email: cred.email };
+    const key = cred.key?.trim();
+    if (!key) {
+      return null;
+    }
+    return { apiKey: key, provider: cred.provider, email: cred.email };
   }
   if (cred.type === "token") {
     const token = cred.token?.trim();
-    if (!token) return null;
+    if (!token) {
+      return null;
+    }
     if (
       typeof cred.expires === "number" &&
       Number.isFinite(cred.expires) &&
@@ -161,7 +190,9 @@ export async function resolveApiKeyForProfile(params: {
       profileId,
       agentDir: params.agentDir,
     });
-    if (!result) return null;
+    if (!result) {
+      return null;
+    }
     return {
       apiKey: result.apiKey,
       provider: cred.provider,
@@ -191,7 +222,9 @@ export async function resolveApiKeyForProfile(params: {
           profileId: fallbackProfileId,
           agentDir: params.agentDir,
         });
-        if (fallbackResolved) return fallbackResolved;
+        if (fallbackResolved) {
+          return fallbackResolved;
+        }
       } catch {
         // keep original error
       }
@@ -233,6 +266,7 @@ export async function resolveApiKeyForProfile(params: {
       `OAuth token refresh failed for ${cred.provider}: ${message}. ` +
         "Please try again or re-authenticate." +
         (hint ? `\n\n${hint}` : ""),
+      { cause: error },
     );
   }
 }

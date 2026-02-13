@@ -9,6 +9,7 @@ import {
   getFreePort,
   installGatewayTestHooks,
   startGatewayServer,
+  testState,
 } from "./test-helpers.js";
 
 installGatewayTestHooks({ scope: "suite" });
@@ -17,13 +18,15 @@ let server: Awaited<ReturnType<typeof startGatewayServer>>;
 let gatewayPort: number;
 let prevGatewayPort: string | undefined;
 let prevGatewayToken: string | undefined;
+const gatewayToken = "test-token";
 
 beforeAll(async () => {
   prevGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
   prevGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
   gatewayPort = await getFreePort();
+  testState.gatewayAuth = { mode: "token", token: gatewayToken };
   process.env.OPENCLAW_GATEWAY_PORT = String(gatewayPort);
-  process.env.OPENCLAW_GATEWAY_TOKEN = "test-token";
+  process.env.OPENCLAW_GATEWAY_TOKEN = gatewayToken;
   server = await startGatewayServer(gatewayPort);
 });
 
@@ -87,7 +90,9 @@ describe("sessions_send gateway loopback", () => {
     });
 
     const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
-    if (!tool) throw new Error("missing sessions_send tool");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
 
     const result = await tool.execute("call-loopback", {
       sessionKey: "main",
@@ -103,8 +108,14 @@ describe("sessions_send gateway loopback", () => {
     expect(details.reply).toBe("pong");
     expect(details.sessionKey).toBe("main");
 
-    const firstCall = spy.mock.calls[0]?.[0] as { lane?: string } | undefined;
+    const firstCall = spy.mock.calls[0]?.[0] as
+      | { lane?: string; inputProvenance?: { kind?: string; sourceTool?: string } }
+      | undefined;
     expect(firstCall?.lane).toBe("nested");
+    expect(firstCall?.inputProvenance).toMatchObject({
+      kind: "inter_session",
+      sourceTool: "sessions_send",
+    });
   });
 });
 
@@ -152,7 +163,9 @@ describe("sessions_send label lookup", () => {
     });
 
     const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
-    if (!tool) throw new Error("missing sessions_send tool");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
 
     // Send using label instead of sessionKey
     const result = await tool.execute("call-by-label", {
@@ -172,7 +185,9 @@ describe("sessions_send label lookup", () => {
 
   it("returns error when label not found", { timeout: 60_000 }, async () => {
     const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
-    if (!tool) throw new Error("missing sessions_send tool");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
 
     const result = await tool.execute("call-missing-label", {
       label: "nonexistent-label",
@@ -186,7 +201,9 @@ describe("sessions_send label lookup", () => {
 
   it("returns error when neither sessionKey nor label provided", { timeout: 60_000 }, async () => {
     const tool = createOpenClawTools().find((candidate) => candidate.name === "sessions_send");
-    if (!tool) throw new Error("missing sessions_send tool");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
 
     const result = await tool.execute("call-no-key", {
       message: "hello",

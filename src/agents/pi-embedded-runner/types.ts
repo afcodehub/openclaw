@@ -1,11 +1,27 @@
-import type { MessagingToolSend } from "../pi-embedded-messaging.js";
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
+import type { MessagingToolSend } from "../pi-embedded-messaging.js";
 
 export type EmbeddedPiAgentMeta = {
   sessionId: string;
   provider: string;
   model: string;
+  compactionCount?: number;
+  promptTokens?: number;
   usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+  /**
+   * Usage from the last individual API call (not accumulated across tool-use
+   * loops or compaction retries). Used for context-window utilization display
+   * (`totalTokens` in sessions.json) because the accumulated `usage.input`
+   * sums input tokens from every API call in the run, which overstates the
+   * actual context size.
+   */
+  lastCallUsage?: {
     input?: number;
     output?: number;
     cacheRead?: number;

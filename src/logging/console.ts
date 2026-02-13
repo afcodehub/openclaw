@@ -1,12 +1,11 @@
 import { createRequire } from "node:module";
 import util from "node:util";
-
 import type { OpenClawConfig } from "../config/types.js";
 import { isVerbose } from "../globals.js";
 import { stripAnsi } from "../terminal/ansi.js";
+import { readLoggingConfig } from "./config.js";
 import { type LogLevel, normalizeLogLevel } from "./levels.js";
 import { getLogger, type LoggerSettings } from "./logger.js";
-import { readLoggingConfig } from "./config.js";
 import { loggingState } from "./state.js";
 
 export type ConsoleStyle = "pretty" | "compact" | "json";
@@ -17,9 +16,27 @@ type ConsoleSettings = {
 export type ConsoleLoggerSettings = ConsoleSettings;
 
 const requireConfig = createRequire(import.meta.url);
+type ConsoleConfigLoader = () => OpenClawConfig["logging"] | undefined;
+const loadConfigFallbackDefault: ConsoleConfigLoader = () => {
+  try {
+    const loaded = requireConfig("../config/config.js") as {
+      loadConfig?: () => OpenClawConfig;
+    };
+    return loaded.loadConfig?.().logging;
+  } catch {
+    return undefined;
+  }
+};
+let loadConfigFallback: ConsoleConfigLoader = loadConfigFallbackDefault;
+
+export function setConsoleConfigLoaderForTests(loader?: ConsoleConfigLoader): void {
+  loadConfigFallback = loader ?? loadConfigFallbackDefault;
+}
 
 function normalizeConsoleLevel(level?: string): LogLevel {
-  if (isVerbose()) return "debug";
+  if (isVerbose()) {
+    return "debug";
+  }
   return normalizeLogLevel(level, "info");
 }
 
@@ -27,7 +44,9 @@ function normalizeConsoleStyle(style?: string): ConsoleStyle {
   if (style === "compact" || style === "json" || style === "pretty") {
     return style;
   }
-  if (!process.stdout.isTTY) return "compact";
+  if (!process.stdout.isTTY) {
+    return "compact";
+  }
   return "pretty";
 }
 
@@ -40,12 +59,7 @@ function resolveConsoleSettings(): ConsoleSettings {
     } else {
       loggingState.resolvingConsoleSettings = true;
       try {
-        const loaded = requireConfig("../config/config.js") as {
-          loadConfig?: () => OpenClawConfig;
-        };
-        cfg = loaded.loadConfig?.().logging;
-      } catch {
-        cfg = undefined;
+        cfg = loadConfigFallback();
       } finally {
         loggingState.resolvingConsoleSettings = false;
       }
@@ -57,7 +71,9 @@ function resolveConsoleSettings(): ConsoleSettings {
 }
 
 function consoleSettingsChanged(a: ConsoleSettings | null, b: ConsoleSettings) {
-  if (!a) return true;
+  if (!a) {
+    return true;
+  }
   return a.level !== b.level || a.style !== b.style;
 }
 
@@ -110,7 +126,9 @@ const SUPPRESSED_CONSOLE_PREFIXES = [
 ] as const;
 
 function shouldSuppressConsoleMessage(message: string): boolean {
-  if (isVerbose()) return false;
+  if (isVerbose()) {
+    return false;
+  }
   if (SUPPRESSED_CONSOLE_PREFIXES.some((prefix) => message.startsWith(prefix))) {
     return true;
   }
@@ -128,19 +146,39 @@ function isEpipeError(err: unknown): boolean {
   return code === "EPIPE" || code === "EIO";
 }
 
-function formatConsoleTimestamp(style: ConsoleStyle): string {
-  const now = new Date().toISOString();
-  if (style === "pretty") return now.slice(11, 19);
-  return now;
+export function formatConsoleTimestamp(style: ConsoleStyle): string {
+  const now = new Date();
+  if (style === "pretty") {
+    const h = String(now.getHours()).padStart(2, "0");
+    const m = String(now.getMinutes()).padStart(2, "0");
+    const s = String(now.getSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const h = String(now.getHours()).padStart(2, "0");
+  const m = String(now.getMinutes()).padStart(2, "0");
+  const s = String(now.getSeconds()).padStart(2, "0");
+  const ms = String(now.getMilliseconds()).padStart(3, "0");
+  const tzOffset = now.getTimezoneOffset();
+  const tzSign = tzOffset <= 0 ? "+" : "-";
+  const tzHours = String(Math.floor(Math.abs(tzOffset) / 60)).padStart(2, "0");
+  const tzMinutes = String(Math.abs(tzOffset) % 60).padStart(2, "0");
+  return `${year}-${month}-${day}T${h}:${m}:${s}.${ms}${tzSign}${tzHours}:${tzMinutes}`;
 }
 
 function hasTimestampPrefix(value: string): boolean {
-  return /^(?:\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)/.test(value);
+  return /^(?:\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)/.test(
+    value,
+  );
 }
 
 function isJsonPayload(value: string): boolean {
   const trimmed = value.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return false;
+  }
   try {
     JSON.parse(trimmed);
     return true;
@@ -154,8 +192,28 @@ function isJsonPayload(value: string): boolean {
  * This keeps user-facing output unchanged but guarantees every console call is captured in log files.
  */
 export function enableConsoleCapture(): void {
-  if (loggingState.consolePatched) return;
+  if (loggingState.consolePatched) {
+    return;
+  }
   loggingState.consolePatched = true;
+
+  // Handle async EPIPE errors on stdout/stderr. The synchronous try/catch in
+  // the forward() wrapper below only covers errors thrown during write dispatch.
+  // When the receiving pipe closes (e.g. during shutdown), Node emits the error
+  // asynchronously on the stream. Without a listener this becomes an uncaught
+  // exception that crashes the gateway.
+  // Guard separately from consolePatched so test resets don't stack listeners.
+  if (!loggingState.streamErrorHandlersInstalled) {
+    loggingState.streamErrorHandlersInstalled = true;
+    for (const stream of [process.stdout, process.stderr]) {
+      stream.on("error", (err) => {
+        if (isEpipeError(err)) {
+          return;
+        }
+        throw err;
+      });
+    }
+  }
 
   let logger: ReturnType<typeof getLogger> | null = null;
   const getLoggerLazy = () => {
@@ -184,7 +242,9 @@ export function enableConsoleCapture(): void {
     (level: LogLevel, orig: (...args: unknown[]) => void) =>
     (...args: unknown[]) => {
       const formatted = util.format(...args);
-      if (shouldSuppressConsoleMessage(formatted)) return;
+      if (shouldSuppressConsoleMessage(formatted)) {
+        return;
+      }
       const trimmed = stripAnsi(formatted).trimStart();
       const shouldPrefixTimestamp =
         loggingState.consoleTimestampPrefix &&
@@ -219,7 +279,9 @@ export function enableConsoleCapture(): void {
           const line = timestamp ? `${timestamp} ${formatted}` : formatted;
           process.stderr.write(`${line}\n`);
         } catch (err) {
-          if (isEpipeError(err)) return;
+          if (isEpipeError(err)) {
+            return;
+          }
           throw err;
         }
       } else {
@@ -238,7 +300,9 @@ export function enableConsoleCapture(): void {
           }
           orig.call(console, timestamp, ...args);
         } catch (err) {
-          if (isEpipeError(err)) return;
+          if (isEpipeError(err)) {
+            return;
+          }
           throw err;
         }
       }

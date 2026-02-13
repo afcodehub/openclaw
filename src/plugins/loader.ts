@@ -1,32 +1,32 @@
+import { createJiti } from "jiti";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createJiti } from "jiti";
-
 import type { OpenClawConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
-import { resolveUserPath } from "../utils.js";
-import { discoverOpenClawPlugins } from "./discovery.js";
-import { loadPluginManifestRegistry } from "./manifest-registry.js";
-import {
-  normalizePluginsConfig,
-  resolveEnableState,
-  resolveMemorySlotDecision,
-  type NormalizedPluginsConfig,
-} from "./config-state.js";
-import { initializeGlobalHookRunner } from "./hook-runner-global.js";
-import { clearPluginCommands } from "./commands.js";
-import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
-import { createPluginRuntime } from "./runtime/index.js";
-import { setActivePluginRegistry } from "./runtime.js";
-import { validateJsonSchemaValue } from "./schema-validator.js";
 import type {
   OpenClawPluginDefinition,
   OpenClawPluginModule,
   PluginDiagnostic,
   PluginLogger,
 } from "./types.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+import { resolveUserPath } from "../utils.js";
+import { clearPluginCommands } from "./commands.js";
+import {
+  applyTestPluginDefaults,
+  normalizePluginsConfig,
+  resolveEnableState,
+  resolveMemorySlotDecision,
+  type NormalizedPluginsConfig,
+} from "./config-state.js";
+import { discoverOpenClawPlugins } from "./discovery.js";
+import { initializeGlobalHookRunner } from "./hook-runner-global.js";
+import { loadPluginManifestRegistry } from "./manifest-registry.js";
+import { createPluginRegistry, type PluginRecord, type PluginRegistry } from "./registry.js";
+import { setActivePluginRegistry } from "./runtime.js";
+import { createPluginRuntime } from "./runtime/index.js";
+import { validateJsonSchemaValue } from "./schema-validator.js";
 
 export type PluginLoadResult = PluginRegistry;
 
@@ -46,20 +46,26 @@ const defaultLogger = () => createSubsystemLogger("plugins");
 const resolvePluginSdkAlias = (): string | null => {
   try {
     const modulePath = fileURLToPath(import.meta.url);
-    const isDistRuntime = modulePath.split(path.sep).includes("dist");
-    const preferDist = process.env.VITEST || process.env.NODE_ENV === "test" || isDistRuntime;
+    const isProduction = process.env.NODE_ENV === "production";
+    const isTest = process.env.VITEST || process.env.NODE_ENV === "test";
     let cursor = path.dirname(modulePath);
     for (let i = 0; i < 6; i += 1) {
       const srcCandidate = path.join(cursor, "src", "plugin-sdk", "index.ts");
       const distCandidate = path.join(cursor, "dist", "plugin-sdk", "index.js");
-      const orderedCandidates = preferDist
-        ? [distCandidate, srcCandidate]
+      const orderedCandidates = isProduction
+        ? isTest
+          ? [distCandidate, srcCandidate]
+          : [distCandidate]
         : [srcCandidate, distCandidate];
       for (const candidate of orderedCandidates) {
-        if (fs.existsSync(candidate)) return candidate;
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
       }
       const parent = path.dirname(cursor);
-      if (parent === cursor) break;
+      if (parent === cursor) {
+        break;
+      }
       cursor = parent;
     }
   } catch {
@@ -162,7 +168,9 @@ function pushDiagnostics(diagnostics: PluginDiagnostic[], append: PluginDiagnost
 }
 
 export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegistry {
-  const cfg = options.config ?? {};
+  // Test env: default-disable plugins unless explicitly configured.
+  // This keeps unit/gateway suites fast and avoids loading heavyweight plugin deps by accident.
+  const cfg = applyTestPluginDefaults(options.config ?? {}, process.env);
   const logger = options.logger ?? defaultLogger();
   const validateOnly = options.mode === "validate";
   const normalized = normalizePluginsConfig(cfg.plugins);
@@ -405,7 +413,7 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
 
     try {
       const result = register(api);
-      if (result && typeof (result as Promise<void>).then === "function") {
+      if (result && typeof result.then === "function") {
         registry.diagnostics.push({
           level: "warn",
           pluginId: record.id,

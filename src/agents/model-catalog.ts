@@ -20,12 +20,41 @@ type DiscoveredModel = {
   input?: Array<"text" | "image">;
 };
 
-type PiSdkModule = typeof import("@mariozechner/pi-coding-agent");
+type PiSdkModule = typeof import("./pi-model-discovery.js");
 
 let modelCatalogPromise: Promise<ModelCatalogEntry[]> | null = null;
 let hasLoggedModelCatalogError = false;
-const defaultImportPiSdk = () => import("@mariozechner/pi-coding-agent");
+const defaultImportPiSdk = () => import("./pi-model-discovery.js");
 let importPiSdk = defaultImportPiSdk;
+
+const CODEX_PROVIDER = "openai-codex";
+const OPENAI_CODEX_GPT53_MODEL_ID = "gpt-5.3-codex";
+const OPENAI_CODEX_GPT53_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
+
+function applyOpenAICodexSparkFallback(models: ModelCatalogEntry[]): void {
+  const hasSpark = models.some(
+    (entry) =>
+      entry.provider === CODEX_PROVIDER &&
+      entry.id.toLowerCase() === OPENAI_CODEX_GPT53_SPARK_MODEL_ID,
+  );
+  if (hasSpark) {
+    return;
+  }
+
+  const baseModel = models.find(
+    (entry) =>
+      entry.provider === CODEX_PROVIDER && entry.id.toLowerCase() === OPENAI_CODEX_GPT53_MODEL_ID,
+  );
+  if (!baseModel) {
+    return;
+  }
+
+  models.push({
+    ...baseModel,
+    id: OPENAI_CODEX_GPT53_SPARK_MODEL_ID,
+    name: OPENAI_CODEX_GPT53_SPARK_MODEL_ID,
+  });
+}
 
 export function resetModelCatalogCacheForTest() {
   modelCatalogPromise = null;
@@ -45,27 +74,35 @@ export async function loadModelCatalog(params?: {
   if (params?.useCache === false) {
     modelCatalogPromise = null;
   }
-  if (modelCatalogPromise) return modelCatalogPromise;
+  if (modelCatalogPromise) {
+    return modelCatalogPromise;
+  }
 
   modelCatalogPromise = (async () => {
     const models: ModelCatalogEntry[] = [];
     const sortModels = (entries: ModelCatalogEntry[]) =>
       entries.sort((a, b) => {
         const p = a.provider.localeCompare(b.provider);
-        if (p !== 0) return p;
+        if (p !== 0) {
+          return p;
+        }
         return a.name.localeCompare(b.name);
       });
     try {
       const cfg = params?.config ?? loadConfig();
       await ensureOpenClawModelsJson(cfg);
+      await (
+        await import("./pi-auth-json.js")
+      ).ensurePiAuthJsonFromAuthProfiles(resolveOpenClawAgentDir());
       // IMPORTANT: keep the dynamic import *inside* the try/catch.
       // If this fails once (e.g. during a pnpm install that temporarily swaps node_modules),
       // we must not poison the cache with a rejected promise (otherwise all channel handlers
       // will keep failing until restart).
       const piSdk = await importPiSdk();
       const agentDir = resolveOpenClawAgentDir();
-      const authStorage = piSdk.discoverAuthStorage(agentDir);
-      const registry = piSdk.discoverModels(authStorage, agentDir) as
+      const { join } = await import("node:path");
+      const authStorage = new piSdk.AuthStorage(join(agentDir, "auth.json"));
+      const registry = new piSdk.ModelRegistry(authStorage, join(agentDir, "models.json")) as
         | {
             getAll: () => Array<DiscoveredModel>;
           }
@@ -73,20 +110,23 @@ export async function loadModelCatalog(params?: {
       const entries = Array.isArray(registry) ? registry : registry.getAll();
       for (const entry of entries) {
         const id = String(entry?.id ?? "").trim();
-        if (!id) continue;
+        if (!id) {
+          continue;
+        }
         const provider = String(entry?.provider ?? "").trim();
-        if (!provider) continue;
+        if (!provider) {
+          continue;
+        }
         const name = String(entry?.name ?? id).trim() || id;
         const contextWindow =
           typeof entry?.contextWindow === "number" && entry.contextWindow > 0
             ? entry.contextWindow
             : undefined;
         const reasoning = typeof entry?.reasoning === "boolean" ? entry.reasoning : undefined;
-        const input = Array.isArray(entry?.input)
-          ? (entry.input as Array<"text" | "image">)
-          : undefined;
+        const input = Array.isArray(entry?.input) ? entry.input : undefined;
         models.push({ id, name, provider, contextWindow, reasoning, input });
       }
+      applyOpenAICodexSparkFallback(models);
 
       if (models.length === 0) {
         // If we found nothing, don't cache this result so we can try again.

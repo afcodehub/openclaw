@@ -1,3 +1,4 @@
+import { isBlockedHostname, isPrivateIpAddress } from "../infra/net/ssrf.js";
 import { DEFAULT_MAX_LINKS } from "./defaults.js";
 
 // Remove markdown link syntax so only bare URLs are considered.
@@ -18,17 +19,33 @@ function resolveMaxLinks(value?: number): number {
 function isAllowedUrl(raw: string): boolean {
   try {
     const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    if (parsed.hostname === "127.0.0.1") return false;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    if (isBlockedHost(parsed.hostname)) {
+      return false;
+    }
     return true;
   } catch {
     return false;
   }
 }
 
+/** Block loopback, private, link-local, and metadata addresses. */
+function isBlockedHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost.localdomain" ||
+    isBlockedHostname(normalized) ||
+    isPrivateIpAddress(normalized)
+  );
+}
+
 export function extractLinksFromMessage(message: string, opts?: { maxLinks?: number }): string[] {
   const source = message?.trim();
-  if (!source) return [];
+  if (!source) {
+    return [];
+  }
 
   const maxLinks = resolveMaxLinks(opts?.maxLinks);
   const sanitized = stripMarkdownLinks(source);
@@ -37,12 +54,20 @@ export function extractLinksFromMessage(message: string, opts?: { maxLinks?: num
 
   for (const match of sanitized.matchAll(BARE_LINK_RE)) {
     const raw = match[0]?.trim();
-    if (!raw) continue;
-    if (!isAllowedUrl(raw)) continue;
-    if (seen.has(raw)) continue;
+    if (!raw) {
+      continue;
+    }
+    if (!isAllowedUrl(raw)) {
+      continue;
+    }
+    if (seen.has(raw)) {
+      continue;
+    }
     seen.add(raw);
     results.push(raw);
-    if (results.length >= maxLinks) break;
+    if (results.length >= maxLinks) {
+      break;
+    }
   }
 
   return results;

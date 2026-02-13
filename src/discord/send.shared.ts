@@ -1,15 +1,14 @@
+import type { RESTAPIPoll } from "discord-api-types/rest/v10";
 import { RequestClient } from "@buape/carbon";
 import { PollLayoutType } from "discord-api-types/payloads/v10";
-import type { RESTAPIPoll } from "discord-api-types/rest/v10";
 import { Routes } from "discord-api-types/v10";
-
-import { loadConfig } from "../config/config.js";
+import type { ChunkMode } from "../auto-reply/chunk.js";
 import type { RetryConfig } from "../infra/retry.js";
+import { loadConfig } from "../config/config.js";
 import { createDiscordRetryRunner, type RetryRunner } from "../infra/retry-policy.js";
 import { normalizePollDurationHours, normalizePollInput, type PollInput } from "../polls.js";
 import { loadWebMedia } from "../web/media.js";
 import { resolveDiscordAccount } from "./accounts.js";
-import type { ChunkMode } from "../auto-reply/chunk.js";
 import { chunkDiscordTextWithMode } from "./chunk.js";
 import { fetchChannelPermissionsDiscord, isThreadChannelType } from "./send.permissions.js";
 import { DiscordSendError } from "./send.types.js";
@@ -45,7 +44,9 @@ type DiscordClientOpts = {
 
 function resolveToken(params: { explicit?: string; accountId: string; fallbackToken?: string }) {
   const explicit = normalizeDiscordToken(params.explicit);
-  if (explicit) return explicit;
+  if (explicit) {
+    return explicit;
+  }
   const fallback = normalizeDiscordToken(params.fallbackToken);
   if (!fallback) {
     throw new Error(
@@ -183,14 +184,18 @@ function normalizeDiscordPollInput(input: PollInput): RESTAPIPoll {
 }
 
 function getDiscordErrorCode(err: unknown) {
-  if (!err || typeof err !== "object") return undefined;
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
   const candidate =
     "code" in err && err.code !== undefined
       ? err.code
       : "rawError" in err && err.rawError && typeof err.rawError === "object"
         ? (err.rawError as { code?: unknown }).code
         : undefined;
-  if (typeof candidate === "number") return candidate;
+  if (typeof candidate === "number") {
+    return candidate;
+  }
   if (typeof candidate === "string" && /^\d+$/.test(candidate)) {
     return Number(candidate);
   }
@@ -206,7 +211,9 @@ async function buildDiscordSendError(
     hasMedia: boolean;
   },
 ) {
-  if (err instanceof DiscordSendError) return err;
+  if (err instanceof DiscordSendError) {
+    return err;
+  }
   const code = getDiscordErrorCode(err);
   if (code === DISCORD_CANNOT_DM) {
     return new DiscordSendError(
@@ -214,7 +221,9 @@ async function buildDiscordSendError(
       { kind: "dm-blocked" },
     );
   }
-  if (code !== DISCORD_MISSING_PERMISSIONS) return err;
+  if (code !== DISCORD_MISSING_PERMISSIONS) {
+    return err;
+  }
 
   let missing: string[] = [];
   try {
@@ -269,6 +278,27 @@ async function resolveChannelId(
   return { channelId: dmChannel.id, dm: true };
 }
 
+// Discord message flag for silent/suppress notifications
+const SUPPRESS_NOTIFICATIONS_FLAG = 1 << 12;
+
+export function buildDiscordTextChunks(
+  text: string,
+  opts: { maxLinesPerMessage?: number; chunkMode?: ChunkMode; maxChars?: number } = {},
+): string[] {
+  if (!text) {
+    return [];
+  }
+  const chunks = chunkDiscordTextWithMode(text, {
+    maxChars: opts.maxChars ?? DISCORD_TEXT_LIMIT,
+    maxLines: opts.maxLinesPerMessage,
+    chunkMode: opts.chunkMode,
+  });
+  if (!chunks.length && text) {
+    chunks.push(text);
+  }
+  return chunks;
+}
+
 async function sendDiscordText(
   rest: RequestClient,
   channelId: string,
@@ -278,17 +308,14 @@ async function sendDiscordText(
   maxLinesPerMessage?: number,
   embeds?: unknown[],
   chunkMode?: ChunkMode,
+  silent?: boolean,
 ) {
   if (!text.trim()) {
     throw new Error("Message must be non-empty for Discord sends");
   }
   const messageReference = replyTo ? { message_id: replyTo, fail_if_not_exists: false } : undefined;
-  const chunks = chunkDiscordTextWithMode(text, {
-    maxChars: DISCORD_TEXT_LIMIT,
-    maxLines: maxLinesPerMessage,
-    chunkMode,
-  });
-  if (!chunks.length && text) chunks.push(text);
+  const flags = silent ? SUPPRESS_NOTIFICATIONS_FLAG : undefined;
+  const chunks = buildDiscordTextChunks(text, { maxLinesPerMessage, chunkMode });
   if (chunks.length === 1) {
     const res = (await request(
       () =>
@@ -297,6 +324,7 @@ async function sendDiscordText(
             content: chunks[0],
             message_reference: messageReference,
             ...(embeds?.length ? { embeds } : {}),
+            ...(flags ? { flags } : {}),
           },
         }) as Promise<{ id: string; channel_id: string }>,
       "text",
@@ -313,6 +341,7 @@ async function sendDiscordText(
             content: chunk,
             message_reference: isFirst ? messageReference : undefined,
             ...(isFirst && embeds?.length ? { embeds } : {}),
+            ...(flags ? { flags } : {}),
           },
         }) as Promise<{ id: string; channel_id: string }>,
       "text",
@@ -335,25 +364,25 @@ async function sendDiscordMedia(
   maxLinesPerMessage?: number,
   embeds?: unknown[],
   chunkMode?: ChunkMode,
+  silent?: boolean,
 ) {
   const media = await loadWebMedia(mediaUrl);
-  const chunks = text
-    ? chunkDiscordTextWithMode(text, {
-        maxChars: DISCORD_TEXT_LIMIT,
-        maxLines: maxLinesPerMessage,
-        chunkMode,
-      })
-    : [];
-  if (!chunks.length && text) chunks.push(text);
+  const chunks = text ? buildDiscordTextChunks(text, { maxLinesPerMessage, chunkMode }) : [];
   const caption = chunks[0] ?? "";
+  const hasCaption = caption.trim().length > 0;
   const messageReference = replyTo ? { message_id: replyTo, fail_if_not_exists: false } : undefined;
+  const flags = silent ? SUPPRESS_NOTIFICATIONS_FLAG : undefined;
   const res = (await request(
     () =>
       rest.post(Routes.channelMessages(channelId), {
         body: {
-          content: caption || undefined,
-          message_reference: messageReference,
+          // Only include content when there is actual text; Discord rejects
+          // media-only messages that carry an empty or undefined content field
+          // when sent as multipart/form-data. Preserve whitespace in captions.
+          ...(hasCaption ? { content: caption } : {}),
+          ...(messageReference ? { message_reference: messageReference } : {}),
           ...(embeds?.length ? { embeds } : {}),
+          ...(flags ? { flags } : {}),
           files: [
             {
               data: media.buffer,
@@ -365,7 +394,9 @@ async function sendDiscordMedia(
     "media",
   )) as { id: string; channel_id: string };
   for (const chunk of chunks.slice(1)) {
-    if (!chunk.trim()) continue;
+    if (!chunk.trim()) {
+      continue;
+    }
     await sendDiscordText(
       rest,
       channelId,
@@ -375,6 +406,7 @@ async function sendDiscordMedia(
       maxLinesPerMessage,
       undefined,
       chunkMode,
+      silent,
     );
   }
   return res;

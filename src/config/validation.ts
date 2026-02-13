@@ -1,5 +1,5 @@
 import path from "node:path";
-
+import type { OpenClawConfig, ConfigValidationIssue } from "./types.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { CHANNEL_IDS, normalizeChatChannelId } from "../channels/registry.js";
 import {
@@ -9,10 +9,10 @@ import {
 } from "../plugins/config-state.js";
 import { loadPluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { validateJsonSchemaValue } from "../plugins/schema-validator.js";
+import { isRecord } from "../utils.js";
 import { findDuplicateAgentDirs, formatDuplicateAgentDirError } from "./agent-dirs.js";
 import { applyAgentDefaults, applyModelDefaults, applySessionDefaults } from "./defaults.js";
 import { findLegacyConfigIssues } from "./legacy.js";
-import type { OpenClawConfig, ConfigValidationIssue } from "./types.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 const AVATAR_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
@@ -24,22 +24,36 @@ function isWorkspaceAvatarPath(value: string, workspaceDir: string): boolean {
   const workspaceRoot = path.resolve(workspaceDir);
   const resolved = path.resolve(workspaceRoot, value);
   const relative = path.relative(workspaceRoot, resolved);
-  if (relative === "") return true;
-  if (relative.startsWith("..")) return false;
+  if (relative === "") {
+    return true;
+  }
+  if (relative.startsWith("..")) {
+    return false;
+  }
   return !path.isAbsolute(relative);
 }
 
 function validateIdentityAvatar(config: OpenClawConfig): ConfigValidationIssue[] {
   const agents = config.agents?.list;
-  if (!Array.isArray(agents) || agents.length === 0) return [];
+  if (!Array.isArray(agents) || agents.length === 0) {
+    return [];
+  }
   const issues: ConfigValidationIssue[] = [];
   for (const [index, entry] of agents.entries()) {
-    if (!entry || typeof entry !== "object") continue;
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
     const avatarRaw = entry.identity?.avatar;
-    if (typeof avatarRaw !== "string") continue;
+    if (typeof avatarRaw !== "string") {
+      continue;
+    }
     const avatar = avatarRaw.trim();
-    if (!avatar) continue;
-    if (AVATAR_DATA_RE.test(avatar) || AVATAR_HTTP_RE.test(avatar)) continue;
+    if (!avatar) {
+      continue;
+    }
+    if (AVATAR_DATA_RE.test(avatar) || AVATAR_HTTP_RE.test(avatar)) {
+      continue;
+    }
     if (avatar.startsWith("~")) {
       issues.push({
         path: `agents.list.${index}.identity.avatar`,
@@ -69,7 +83,11 @@ function validateIdentityAvatar(config: OpenClawConfig): ConfigValidationIssue[]
   return issues;
 }
 
-export function validateConfigObject(
+/**
+ * Validates config without applying runtime defaults.
+ * Use this when you need the raw validated config (e.g., for writing back to file).
+ */
+export function validateConfigObjectRaw(
   raw: unknown,
 ): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
   const legacyIssues = findLegacyConfigIssues(raw);
@@ -110,14 +128,21 @@ export function validateConfigObject(
   }
   return {
     ok: true,
-    config: applyModelDefaults(
-      applyAgentDefaults(applySessionDefaults(validated.data as OpenClawConfig)),
-    ),
+    config: validated.data as OpenClawConfig,
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+export function validateConfigObject(
+  raw: unknown,
+): { ok: true; config: OpenClawConfig } | { ok: false; issues: ConfigValidationIssue[] } {
+  const result = validateConfigObjectRaw(raw);
+  if (!result.ok) {
+    return result;
+  }
+  return {
+    ok: true,
+    config: applyModelDefaults(applyAgentDefaults(applySessionDefaults(result.config))),
+  };
 }
 
 export function validateConfigObjectWithPlugins(raw: unknown):
@@ -131,7 +156,38 @@ export function validateConfigObjectWithPlugins(raw: unknown):
       issues: ConfigValidationIssue[];
       warnings: ConfigValidationIssue[];
     } {
-  const base = validateConfigObject(raw);
+  return validateConfigObjectWithPluginsBase(raw, { applyDefaults: true });
+}
+
+export function validateConfigObjectRawWithPlugins(raw: unknown):
+  | {
+      ok: true;
+      config: OpenClawConfig;
+      warnings: ConfigValidationIssue[];
+    }
+  | {
+      ok: false;
+      issues: ConfigValidationIssue[];
+      warnings: ConfigValidationIssue[];
+    } {
+  return validateConfigObjectWithPluginsBase(raw, { applyDefaults: false });
+}
+
+function validateConfigObjectWithPluginsBase(
+  raw: unknown,
+  opts: { applyDefaults: boolean },
+):
+  | {
+      ok: true;
+      config: OpenClawConfig;
+      warnings: ConfigValidationIssue[];
+    }
+  | {
+      ok: false;
+      issues: ConfigValidationIssue[];
+      warnings: ConfigValidationIssue[];
+    } {
+  const base = opts.applyDefaults ? validateConfigObject(raw) : validateConfigObjectRaw(raw);
   if (!base.ok) {
     return { ok: false, issues: base.issues, warnings: [] };
   }
@@ -178,7 +234,9 @@ export function validateConfigObjectWithPlugins(raw: unknown):
 
   const allow = pluginsConfig?.allow ?? [];
   for (const pluginId of allow) {
-    if (typeof pluginId !== "string" || !pluginId.trim()) continue;
+    if (typeof pluginId !== "string" || !pluginId.trim()) {
+      continue;
+    }
     if (!knownIds.has(pluginId)) {
       issues.push({
         path: "plugins.allow",
@@ -189,7 +247,9 @@ export function validateConfigObjectWithPlugins(raw: unknown):
 
   const deny = pluginsConfig?.deny ?? [];
   for (const pluginId of deny) {
-    if (typeof pluginId !== "string" || !pluginId.trim()) continue;
+    if (typeof pluginId !== "string" || !pluginId.trim()) {
+      continue;
+    }
     if (!knownIds.has(pluginId)) {
       issues.push({
         path: "plugins.deny",
@@ -216,7 +276,9 @@ export function validateConfigObjectWithPlugins(raw: unknown):
   if (config.channels && isRecord(config.channels)) {
     for (const key of Object.keys(config.channels)) {
       const trimmed = key.trim();
-      if (!trimmed) continue;
+      if (!trimmed) {
+        continue;
+      }
       if (!allowedChannels.has(trimmed)) {
         issues.push({
           path: `channels.${trimmed}`,
@@ -233,21 +295,31 @@ export function validateConfigObjectWithPlugins(raw: unknown):
   for (const record of registry.plugins) {
     for (const channelId of record.channels) {
       const trimmed = channelId.trim();
-      if (trimmed) heartbeatChannelIds.add(trimmed.toLowerCase());
+      if (trimmed) {
+        heartbeatChannelIds.add(trimmed.toLowerCase());
+      }
     }
   }
 
   const validateHeartbeatTarget = (target: string | undefined, path: string) => {
-    if (typeof target !== "string") return;
+    if (typeof target !== "string") {
+      return;
+    }
     const trimmed = target.trim();
     if (!trimmed) {
       issues.push({ path, message: "heartbeat target must not be empty" });
       return;
     }
     const normalized = trimmed.toLowerCase();
-    if (normalized === "last" || normalized === "none") return;
-    if (normalizeChatChannelId(trimmed)) return;
-    if (heartbeatChannelIds.has(normalized)) return;
+    if (normalized === "last" || normalized === "none") {
+      return;
+    }
+    if (normalizeChatChannelId(trimmed)) {
+      return;
+    }
+    if (heartbeatChannelIds.has(normalized)) {
+      return;
+    }
     issues.push({ path, message: `unknown heartbeat target: ${target}` });
   };
 

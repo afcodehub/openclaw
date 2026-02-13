@@ -1,21 +1,25 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { Command } from "commander";
-
-import { loadConfig, writeConfigFile } from "../config/config.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
+import type { PluginRecord } from "../plugins/registry.js";
+import { loadConfig, writeConfigFile } from "../config/config.js";
+import { resolveStateDir } from "../config/paths.js";
 import { resolveArchiveKind } from "../infra/archive.js";
 import { installPluginFromNpmSpec, installPluginFromPath } from "../plugins/install.js";
 import { recordPluginInstall } from "../plugins/installs.js";
 import { applyExclusiveSlotSelection } from "../plugins/slots.js";
-import type { PluginRecord } from "../plugins/registry.js";
+import { resolvePluginSourceRoots, formatPluginSourceForTable } from "../plugins/source-display.js";
 import { buildPluginStatusReport } from "../plugins/status.js";
+import { resolveUninstallDirectoryTarget, uninstallPlugin } from "../plugins/uninstall.js";
 import { updateNpmInstalledPlugins } from "../plugins/update.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { resolveUserPath, shortenHomeInString, shortenHomePath } from "../utils.js";
+import { promptYesNo } from "./prompt.js";
 
 export type PluginsListOptions = {
   json?: boolean;
@@ -29,6 +33,13 @@ export type PluginInfoOptions = {
 
 export type PluginUpdateOptions = {
   all?: boolean;
+  dryRun?: boolean;
+};
+
+export type PluginUninstallOptions = {
+  keepFiles?: boolean;
+  keepConfig?: boolean;
+  force?: boolean;
   dryRun?: boolean;
 };
 
@@ -58,11 +69,15 @@ function formatPluginLine(plugin: PluginRecord, verbose = false): string {
     `  source: ${theme.muted(shortenHomeInString(plugin.source))}`,
     `  origin: ${plugin.origin}`,
   ];
-  if (plugin.version) parts.push(`  version: ${plugin.version}`);
+  if (plugin.version) {
+    parts.push(`  version: ${plugin.version}`);
+  }
   if (plugin.providerIds.length > 0) {
     parts.push(`  providers: ${plugin.providerIds.join(", ")}`);
   }
-  if (plugin.error) parts.push(theme.error(`  error: ${plugin.error}`));
+  if (plugin.error) {
+    parts.push(theme.error(`  error: ${plugin.error}`));
+  }
   return parts.join("\n");
 }
 
@@ -85,7 +100,9 @@ function applySlotSelectionForPlugin(
 }
 
 function logSlotWarnings(warnings: string[]) {
-  if (warnings.length === 0) return;
+  if (warnings.length === 0) {
+    return;
+  }
   for (const warning of warnings) {
     defaultRuntime.log(theme.warn(warning));
   }
@@ -135,9 +152,17 @@ export function registerPluginsCli(program: Command) {
 
       if (!opts.verbose) {
         const tableWidth = Math.max(60, (process.stdout.columns ?? 120) - 1);
+        const sourceRoots = resolvePluginSourceRoots({
+          workspaceDir: report.workspaceDir,
+        });
+        const usedRoots = new Set<keyof typeof sourceRoots>();
         const rows = list.map((plugin) => {
           const desc = plugin.description ? theme.muted(plugin.description) : "";
-          const sourceLine = desc ? `${plugin.source}\n${desc}` : plugin.source;
+          const formattedSource = formatPluginSourceForTable(plugin, sourceRoots);
+          if (formattedSource.rootKey) {
+            usedRoots.add(formattedSource.rootKey);
+          }
+          const sourceLine = desc ? `${formattedSource.value}\n${desc}` : formattedSource.value;
           return {
             Name: plugin.name || plugin.id,
             ID: plugin.name && plugin.name !== plugin.id ? plugin.id : "",
@@ -151,6 +176,22 @@ export function registerPluginsCli(program: Command) {
             Version: plugin.version ?? "",
           };
         });
+
+        if (usedRoots.size > 0) {
+          defaultRuntime.log(theme.muted("Source roots:"));
+          for (const key of ["stock", "workspace", "global"] as const) {
+            if (!usedRoots.has(key)) {
+              continue;
+            }
+            const dir = sourceRoots[key];
+            if (!dir) {
+              continue;
+            }
+            defaultRuntime.log(`  ${theme.command(`${key}:`)} ${theme.muted(dir)}`);
+          }
+          defaultRuntime.log("");
+        }
+
         defaultRuntime.log(
           renderTable({
             width: tableWidth,
@@ -200,12 +241,16 @@ export function registerPluginsCli(program: Command) {
       if (plugin.name && plugin.name !== plugin.id) {
         lines.push(theme.muted(`id: ${plugin.id}`));
       }
-      if (plugin.description) lines.push(plugin.description);
+      if (plugin.description) {
+        lines.push(plugin.description);
+      }
       lines.push("");
       lines.push(`${theme.muted("Status:")} ${plugin.status}`);
       lines.push(`${theme.muted("Source:")} ${shortenHomeInString(plugin.source)}`);
       lines.push(`${theme.muted("Origin:")} ${plugin.origin}`);
-      if (plugin.version) lines.push(`${theme.muted("Version:")} ${plugin.version}`);
+      if (plugin.version) {
+        lines.push(`${theme.muted("Version:")} ${plugin.version}`);
+      }
       if (plugin.toolNames.length > 0) {
         lines.push(`${theme.muted("Tools:")} ${plugin.toolNames.join(", ")}`);
       }
@@ -224,18 +269,27 @@ export function registerPluginsCli(program: Command) {
       if (plugin.services.length > 0) {
         lines.push(`${theme.muted("Services:")} ${plugin.services.join(", ")}`);
       }
-      if (plugin.error) lines.push(`${theme.error("Error:")} ${plugin.error}`);
+      if (plugin.error) {
+        lines.push(`${theme.error("Error:")} ${plugin.error}`);
+      }
       if (install) {
         lines.push("");
         lines.push(`${theme.muted("Install:")} ${install.source}`);
-        if (install.spec) lines.push(`${theme.muted("Spec:")} ${install.spec}`);
-        if (install.sourcePath)
+        if (install.spec) {
+          lines.push(`${theme.muted("Spec:")} ${install.spec}`);
+        }
+        if (install.sourcePath) {
           lines.push(`${theme.muted("Source path:")} ${shortenHomePath(install.sourcePath)}`);
-        if (install.installPath)
+        }
+        if (install.installPath) {
           lines.push(`${theme.muted("Install path:")} ${shortenHomePath(install.installPath)}`);
-        if (install.version) lines.push(`${theme.muted("Recorded version:")} ${install.version}`);
-        if (install.installedAt)
+        }
+        if (install.version) {
+          lines.push(`${theme.muted("Recorded version:")} ${install.version}`);
+        }
+        if (install.installedAt) {
           lines.push(`${theme.muted("Installed at:")} ${install.installedAt}`);
+        }
       }
       defaultRuntime.log(lines.join("\n"));
     });
@@ -287,6 +341,141 @@ export function registerPluginsCli(program: Command) {
       };
       await writeConfigFile(next);
       defaultRuntime.log(`Disabled plugin "${id}". Restart the gateway to apply.`);
+    });
+
+  plugins
+    .command("uninstall")
+    .description("Uninstall a plugin")
+    .argument("<id>", "Plugin id")
+    .option("--keep-files", "Keep installed files on disk", false)
+    .option("--keep-config", "Deprecated alias for --keep-files", false)
+    .option("--force", "Skip confirmation prompt", false)
+    .option("--dry-run", "Show what would be removed without making changes", false)
+    .action(async (id: string, opts: PluginUninstallOptions) => {
+      const cfg = loadConfig();
+      const report = buildPluginStatusReport({ config: cfg });
+      const extensionsDir = path.join(resolveStateDir(process.env, os.homedir), "extensions");
+      const keepFiles = Boolean(opts.keepFiles || opts.keepConfig);
+
+      if (opts.keepConfig) {
+        defaultRuntime.log(theme.warn("`--keep-config` is deprecated, use `--keep-files`."));
+      }
+
+      // Find plugin by id or name
+      const plugin = report.plugins.find((p) => p.id === id || p.name === id);
+      const pluginId = plugin?.id ?? id;
+
+      // Check if plugin exists in config
+      const hasEntry = pluginId in (cfg.plugins?.entries ?? {});
+      const hasInstall = pluginId in (cfg.plugins?.installs ?? {});
+
+      if (!hasEntry && !hasInstall) {
+        if (plugin) {
+          defaultRuntime.error(
+            `Plugin "${pluginId}" is not managed by plugins config/install records and cannot be uninstalled.`,
+          );
+        } else {
+          defaultRuntime.error(`Plugin not found: ${id}`);
+        }
+        process.exit(1);
+      }
+
+      const install = cfg.plugins?.installs?.[pluginId];
+      const isLinked = install?.source === "path";
+
+      // Build preview of what will be removed
+      const preview: string[] = [];
+      if (hasEntry) {
+        preview.push("config entry");
+      }
+      if (hasInstall) {
+        preview.push("install record");
+      }
+      if (cfg.plugins?.allow?.includes(pluginId)) {
+        preview.push("allowlist entry");
+      }
+      if (
+        isLinked &&
+        install?.sourcePath &&
+        cfg.plugins?.load?.paths?.includes(install.sourcePath)
+      ) {
+        preview.push("load path");
+      }
+      if (cfg.plugins?.slots?.memory === pluginId) {
+        preview.push(`memory slot (will reset to "memory-core")`);
+      }
+      const deleteTarget = !keepFiles
+        ? resolveUninstallDirectoryTarget({
+            pluginId,
+            hasInstall,
+            installRecord: install,
+            extensionsDir,
+          })
+        : null;
+      if (deleteTarget) {
+        preview.push(`directory: ${shortenHomePath(deleteTarget)}`);
+      }
+
+      const pluginName = plugin?.name || pluginId;
+      defaultRuntime.log(
+        `Plugin: ${theme.command(pluginName)}${pluginName !== pluginId ? theme.muted(` (${pluginId})`) : ""}`,
+      );
+      defaultRuntime.log(`Will remove: ${preview.length > 0 ? preview.join(", ") : "(nothing)"}`);
+
+      if (opts.dryRun) {
+        defaultRuntime.log(theme.muted("Dry run, no changes made."));
+        return;
+      }
+
+      if (!opts.force) {
+        const confirmed = await promptYesNo(`Uninstall plugin "${pluginId}"?`);
+        if (!confirmed) {
+          defaultRuntime.log("Cancelled.");
+          return;
+        }
+      }
+
+      const result = await uninstallPlugin({
+        config: cfg,
+        pluginId,
+        deleteFiles: !keepFiles,
+        extensionsDir,
+      });
+
+      if (!result.ok) {
+        defaultRuntime.error(result.error);
+        process.exit(1);
+      }
+      for (const warning of result.warnings) {
+        defaultRuntime.log(theme.warn(warning));
+      }
+
+      await writeConfigFile(result.config);
+
+      const removed: string[] = [];
+      if (result.actions.entry) {
+        removed.push("config entry");
+      }
+      if (result.actions.install) {
+        removed.push("install record");
+      }
+      if (result.actions.allowlist) {
+        removed.push("allowlist");
+      }
+      if (result.actions.loadPath) {
+        removed.push("load path");
+      }
+      if (result.actions.memorySlot) {
+        removed.push("memory slot");
+      }
+      if (result.actions.directory) {
+        removed.push("directory");
+      }
+
+      defaultRuntime.log(
+        `Uninstalled plugin "${pluginId}". Removed: ${removed.length > 0 ? removed.join(", ") : "nothing"}.`,
+      );
+      defaultRuntime.log("Restart the gateway to apply changes.");
     });
 
   plugins
@@ -514,7 +703,9 @@ export function registerPluginsCli(program: Command) {
         }
       }
       if (diags.length > 0) {
-        if (lines.length > 0) lines.push("");
+        if (lines.length > 0) {
+          lines.push("");
+        }
         lines.push(theme.warn("Diagnostics:"));
         for (const diag of diags) {
           const target = diag.pluginId ? `${diag.pluginId}: ` : "";

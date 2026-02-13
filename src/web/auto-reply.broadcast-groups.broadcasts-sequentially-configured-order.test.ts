@@ -13,8 +13,8 @@ vi.mock("../agents/pi-embedded.js", () => ({
   resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
-import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
 import { monitorWebChannel } from "./auto-reply.js";
 import { resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
 
@@ -33,7 +33,7 @@ const rmDirWithRetries = async (dir: string): Promise<void> => {
           ? String((err as { code?: unknown }).code)
           : null;
       if (code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM") {
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, 5));
         continue;
       }
       throw err;
@@ -77,7 +77,7 @@ const _makeSessionStore = async (
             ? String((err as { code?: unknown }).code)
             : null;
         if (code === "ENOTEMPTY" || code === "EBUSY" || code === "EPERM") {
-          await new Promise((resolve) => setTimeout(resolve, 25));
+          await new Promise((resolve) => setTimeout(resolve, 5));
           continue;
         }
         throw err;
@@ -224,7 +224,8 @@ describe("broadcast groups", () => {
       };
       expect(payload.Body).toContain("Chat messages since your last reply");
       expect(payload.Body).toContain("Alice (+111): hello group");
-      expect(payload.Body).toContain("[message_id: g1]");
+      // Message id hints are not included in prompts anymore.
+      expect(payload.Body).not.toContain("[message_id:");
       expect(payload.Body).toContain("@bot ping");
       expect(payload.SenderName).toBe("Bob");
       expect(payload.SenderE164).toBe("+222");

@@ -1,12 +1,12 @@
-import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
-import { listChannelPlugins } from "../channels/plugins/index.js";
 import type { ChannelId } from "../channels/plugins/types.js";
 import type { OpenClawConfig, GatewayBindMode } from "../config/config.js";
-import { readChannelAllowFromStore } from "../pairing/pairing-store.js";
-import { note } from "../terminal/note.js";
+import { resolveChannelDefaultAccountId } from "../channels/plugins/helpers.js";
+import { listChannelPlugins } from "../channels/plugins/index.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
 import { isLoopbackHost, resolveGatewayBindHost } from "../gateway/net.js";
+import { readChannelAllowFromStore } from "../pairing/pairing-store.js";
+import { note } from "../terminal/note.js";
 
 export async function noteSecurityWarnings(cfg: OpenClawConfig) {
   const warnings: string[] = [];
@@ -124,13 +124,17 @@ export async function noteSecurityWarnings(cfg: OpenClawConfig) {
 
     if (dmScope === "main" && isMultiUserDm) {
       warnings.push(
-        `- ${params.label} DMs: multiple senders share the main session; set session.dmScope="per-channel-peer" (or "per-account-channel-peer" for multi-account channels) to isolate sessions.`,
+        `- ${params.label} DMs: multiple senders share the main session; run: ` +
+          formatCliCommand('openclaw config set session.dmScope "per-channel-peer"') +
+          ' (or "per-account-channel-peer" for multi-account channels) to isolate sessions.',
       );
     }
   };
 
   for (const plugin of listChannelPlugins()) {
-    if (!plugin.security) continue;
+    if (!plugin.security) {
+      continue;
+    }
     const accountIds = plugin.config.listAccountIds(cfg);
     const defaultAccountId = resolveChannelDefaultAccountId({
       plugin,
@@ -139,11 +143,15 @@ export async function noteSecurityWarnings(cfg: OpenClawConfig) {
     });
     const account = plugin.config.resolveAccount(cfg, defaultAccountId);
     const enabled = plugin.config.isEnabled ? plugin.config.isEnabled(account, cfg) : true;
-    if (!enabled) continue;
+    if (!enabled) {
+      continue;
+    }
     const configured = plugin.config.isConfigured
       ? await plugin.config.isConfigured(account, cfg)
       : true;
-    if (!configured) continue;
+    if (!configured) {
+      continue;
+    }
     const dmPolicy = plugin.security.resolveDmPolicy?.({
       cfg,
       accountId: defaultAccountId,
@@ -167,7 +175,9 @@ export async function noteSecurityWarnings(cfg: OpenClawConfig) {
         accountId: defaultAccountId,
         account,
       });
-      if (extra?.length) warnings.push(...extra);
+      if (extra?.length) {
+        warnings.push(...extra);
+      }
     }
   }
 

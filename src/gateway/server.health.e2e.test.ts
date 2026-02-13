@@ -11,6 +11,7 @@ import {
 } from "../infra/device-identity.js";
 import { emitHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
+import { buildDeviceAuthPayload } from "./device-auth.js";
 import {
   connectOk,
   getFreePort,
@@ -19,7 +20,6 @@ import {
   startGatewayServer,
   startServerWithClient,
 } from "./test-helpers.js";
-import { buildDeviceAuthPayload } from "./device-auth.js";
 
 installGatewayTestHooks({ scope: "suite" });
 
@@ -36,8 +36,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  if (previousToken === undefined) delete process.env.OPENCLAW_GATEWAY_TOKEN;
-  else process.env.OPENCLAW_GATEWAY_TOKEN = previousToken;
+  if (previousToken === undefined) {
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  } else {
+    process.env.OPENCLAW_GATEWAY_TOKEN = previousToken;
+  }
 });
 
 const openClient = async (opts?: Parameters<typeof connectOk>[1]) => {
@@ -210,14 +213,17 @@ describe("gateway server health/presence", () => {
       expect(evt.payload?.presence?.length).toBeGreaterThan(0);
       expect(typeof evt.seq).toBe("number");
     }
-    for (const c of clients) c.close();
+    for (const c of clients) {
+      c.close();
+    }
   });
 
   test("presence includes client fingerprint", async () => {
     const identityPath = path.join(os.tmpdir(), `openclaw-device-${randomUUID()}.json`);
     const identity = loadOrCreateDeviceIdentity(identityPath);
+    const token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim() || undefined;
     const role = "operator";
-    const scopes: string[] = [];
+    const scopes: string[] = ["operator.admin"];
     const signedAtMs = Date.now();
     const payload = buildDeviceAuthPayload({
       deviceId: identity.deviceId,
@@ -226,11 +232,12 @@ describe("gateway server health/presence", () => {
       role,
       scopes,
       signedAtMs,
-      token: null,
+      token: token ?? null,
     });
     const ws = await openClient({
       role,
       scopes,
+      token,
       client: {
         id: GATEWAY_CLIENT_NAMES.FINGERPRINT,
         version: "9.9.9",
@@ -257,8 +264,14 @@ describe("gateway server health/presence", () => {
       }),
     );
 
-    const presenceRes = await presenceP;
-    const entries = presenceRes.payload as Array<Record<string, unknown>>;
+    const presenceRes = (await presenceP) as { ok?: boolean; payload?: unknown };
+    expect(presenceRes.ok).toBe(true);
+    const presencePayload = presenceRes.payload;
+    const entries = Array.isArray(presencePayload)
+      ? presencePayload
+      : Array.isArray((presencePayload as { presence?: unknown } | undefined)?.presence)
+        ? ((presencePayload as { presence: Array<Record<string, unknown>> }).presence ?? [])
+        : [];
     const clientEntry = entries.find(
       (e) => e.host === GATEWAY_CLIENT_NAMES.FINGERPRINT && e.version === "9.9.9",
     );

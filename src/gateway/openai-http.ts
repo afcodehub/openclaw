@@ -1,17 +1,18 @@
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-
+import { randomUUID } from "node:crypto";
+import type { AuthRateLimiter } from "./auth-rate-limit.js";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { logWarn } from "../logger.js";
 import { defaultRuntime } from "../runtime.js";
 import { authorizeGatewayConnect, type ResolvedGatewayAuth } from "./auth.js";
 import {
   readJsonBodyOrError,
+  sendGatewayAuthFailure,
   sendJson,
   sendMethodNotAllowed,
-  sendUnauthorized,
   setSseHeaders,
   writeDone,
 } from "./http-common.js";
@@ -21,6 +22,7 @@ type OpenAiHttpOptions = {
   auth: ResolvedGatewayAuth;
   maxBodyBytes?: number;
   trustedProxies?: string[];
+  rateLimiter?: AuthRateLimiter;
 };
 
 type OpenAiChatMessage = {
@@ -45,17 +47,27 @@ function asMessages(val: unknown): OpenAiChatMessage[] {
 }
 
 function extractTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") {
+    return content;
+  }
   if (Array.isArray(content)) {
     return content
       .map((part) => {
-        if (!part || typeof part !== "object") return "";
+        if (!part || typeof part !== "object") {
+          return "";
+        }
         const type = (part as { type?: unknown }).type;
         const text = (part as { text?: unknown }).text;
         const inputText = (part as { input_text?: unknown }).input_text;
-        if (type === "text" && typeof text === "string") return text;
-        if (type === "input_text" && typeof text === "string") return text;
-        if (typeof inputText === "string") return inputText;
+        if (type === "text" && typeof text === "string") {
+          return text;
+        }
+        if (type === "input_text" && typeof text === "string") {
+          return text;
+        }
+        if (typeof inputText === "string") {
+          return inputText;
+        }
         return "";
       })
       .filter(Boolean)
@@ -75,10 +87,14 @@ function buildAgentPrompt(messagesUnknown: unknown): {
     [];
 
   for (const msg of messages) {
-    if (!msg || typeof msg !== "object") continue;
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
     const role = typeof msg.role === "string" ? msg.role.trim() : "";
     const content = extractTextContent(msg.content).trim();
-    if (!role || !content) continue;
+    if (!role || !content) {
+      continue;
+    }
     if (role === "system" || role === "developer") {
       systemParts.push(content);
       continue;
@@ -115,7 +131,9 @@ function buildAgentPrompt(messagesUnknown: unknown): {
         break;
       }
     }
-    if (currentIndex < 0) currentIndex = conversationEntries.length - 1;
+    if (currentIndex < 0) {
+      currentIndex = conversationEntries.length - 1;
+    }
     const currentEntry = conversationEntries[currentIndex]?.entry;
     if (currentEntry) {
       const historyEntries = conversationEntries.slice(0, currentIndex).map((entry) => entry.entry);
@@ -147,7 +165,9 @@ function resolveOpenAiSessionKey(params: {
 }
 
 function coerceRequest(val: unknown): OpenAiChatCompletionRequest {
-  if (!val || typeof val !== "object") return {};
+  if (!val || typeof val !== "object") {
+    return {};
+  }
   return val as OpenAiChatCompletionRequest;
 }
 
@@ -157,7 +177,9 @@ export async function handleOpenAiHttpRequest(
   opts: OpenAiHttpOptions,
 ): Promise<boolean> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host || "localhost"}`);
-  if (url.pathname !== "/v1/chat/completions") return false;
+  if (url.pathname !== "/v1/chat/completions") {
+    return false;
+  }
 
   if (req.method !== "POST") {
     sendMethodNotAllowed(res);
@@ -170,14 +192,17 @@ export async function handleOpenAiHttpRequest(
     connectAuth: { token, password: token },
     req,
     trustedProxies: opts.trustedProxies,
+    rateLimiter: opts.rateLimiter,
   });
   if (!authResult.ok) {
-    sendUnauthorized(res);
+    sendGatewayAuthFailure(res, authResult);
     return true;
   }
 
   const body = await readJsonBodyOrError(req, res, opts.maxBodyBytes ?? 1024 * 1024);
-  if (body === undefined) return true;
+  if (body === undefined) {
+    return true;
+  }
 
   const payload = coerceRequest(body);
   const stream = Boolean(payload.stream);
@@ -240,8 +265,9 @@ export async function handleOpenAiHttpRequest(
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       });
     } catch (err) {
+      logWarn(`openai-compat: chat completion failed: ${String(err)}`);
       sendJson(res, 500, {
-        error: { message: String(err), type: "api_error" },
+        error: { message: "internal error", type: "api_error" },
       });
     }
     return true;
@@ -254,14 +280,20 @@ export async function handleOpenAiHttpRequest(
   let closed = false;
 
   const unsubscribe = onAgentEvent((evt) => {
-    if (evt.runId !== runId) return;
-    if (closed) return;
+    if (evt.runId !== runId) {
+      return;
+    }
+    if (closed) {
+      return;
+    }
 
     if (evt.stream === "assistant") {
       const delta = evt.data?.delta;
       const text = evt.data?.text;
       const content = typeof delta === "string" ? delta : typeof text === "string" ? text : "";
-      if (!content) return;
+      if (!content) {
+        return;
+      }
 
       if (!wroteRole) {
         wroteRole = true;
@@ -323,7 +355,9 @@ export async function handleOpenAiHttpRequest(
         deps,
       );
 
-      if (closed) return;
+      if (closed) {
+        return;
+      }
 
       if (!sawAssistantDelta) {
         if (!wroteRole) {
@@ -362,7 +396,10 @@ export async function handleOpenAiHttpRequest(
         });
       }
     } catch (err) {
-      if (closed) return;
+      logWarn(`openai-compat: streaming chat completion failed: ${String(err)}`);
+      if (closed) {
+        return;
+      }
       writeSse(res, {
         id: runId,
         object: "chat.completion.chunk",
@@ -371,7 +408,7 @@ export async function handleOpenAiHttpRequest(
         choices: [
           {
             index: 0,
-            delta: { content: `Error: ${String(err)}` },
+            delta: { content: "Error: internal error" },
             finish_reason: "stop",
           },
         ],

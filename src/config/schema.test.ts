@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { buildConfigSchema } from "./schema.js";
 
 describe("config schema", () => {
@@ -35,6 +34,21 @@ describe("config schema", () => {
       "Auth Token",
     );
     expect(res.uiHints["plugins.entries.voice-call.config.twilio.authToken"]?.sensitive).toBe(true);
+  });
+
+  it("does not re-mark existing non-sensitive token-like fields", () => {
+    const res = buildConfigSchema({
+      plugins: [
+        {
+          id: "voice-call",
+          configUiHints: {
+            tokens: { label: "Tokens", sensitive: false },
+          },
+        },
+      ],
+    });
+
+    expect(res.uiHints["plugins.entries.voice-call.config.tokens"]?.sensitive).toBe(false);
   });
 
   it("merges plugin + channel schemas", () => {

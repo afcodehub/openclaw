@@ -1,8 +1,8 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
-import { discoverAuthStorage, discoverModels } from "@mariozechner/pi-coding-agent";
-
-import { resolveOpenClawAgentDir } from "../../agents/agent-paths.js";
 import type { AuthProfileStore } from "../../agents/auth-profiles.js";
+import type { OpenClawConfig } from "../../config/config.js";
+import type { ModelRow } from "./list.types.js";
+import { resolveOpenClawAgentDir } from "../../agents/agent-paths.js";
 import { listProfilesForProvider } from "../../agents/auth-profiles.js";
 import {
   getCustomProviderApiKey,
@@ -10,8 +10,8 @@ import {
   resolveEnvApiKey,
 } from "../../agents/model-auth.js";
 import { ensureOpenClawModelsJson } from "../../agents/models-config.js";
-import type { OpenClawConfig } from "../../config/config.js";
-import type { ModelRow } from "./list.types.js";
+import { ensurePiAuthJsonFromAuthProfiles } from "../../agents/pi-auth-json.js";
+import { discoverAuthStorage, discoverModels } from "../../agents/pi-model-discovery.js";
 import { modelKey } from "./shared.js";
 
 const isLocalBaseUrl = (baseUrl: string) => {
@@ -31,20 +31,29 @@ const isLocalBaseUrl = (baseUrl: string) => {
 };
 
 const hasAuthForProvider = (provider: string, cfg: OpenClawConfig, authStore: AuthProfileStore) => {
-  if (listProfilesForProvider(authStore, provider).length > 0) return true;
-  if (provider === "amazon-bedrock" && resolveAwsSdkEnvVarName()) return true;
-  if (resolveEnvApiKey(provider)) return true;
-  if (getCustomProviderApiKey(cfg, provider)) return true;
+  if (listProfilesForProvider(authStore, provider).length > 0) {
+    return true;
+  }
+  if (provider === "amazon-bedrock" && resolveAwsSdkEnvVarName()) {
+    return true;
+  }
+  if (resolveEnvApiKey(provider)) {
+    return true;
+  }
+  if (getCustomProviderApiKey(cfg, provider)) {
+    return true;
+  }
   return false;
 };
 
 export async function loadModelRegistry(cfg: OpenClawConfig) {
   await ensureOpenClawModelsJson(cfg);
   const agentDir = resolveOpenClawAgentDir();
+  await ensurePiAuthJsonFromAuthProfiles(agentDir);
   const authStorage = discoverAuthStorage(agentDir);
   const registry = discoverModels(authStorage, agentDir);
-  const models = registry.getAll() as Model<Api>[];
-  const availableModels = registry.getAvailable() as Model<Api>[];
+  const models = registry.getAll();
+  const availableModels = registry.getAvailable();
   const availableKeys = new Set(availableModels.map((model) => modelKey(model.provider, model.id)));
   return { registry, models, availableKeys };
 }
@@ -82,9 +91,13 @@ export function toModelRow(params: {
   const mergedTags = new Set(tags);
   if (aliasTags.length > 0) {
     for (const tag of mergedTags) {
-      if (tag === "alias" || tag.startsWith("alias:")) mergedTags.delete(tag);
+      if (tag === "alias" || tag.startsWith("alias:")) {
+        mergedTags.delete(tag);
+      }
     }
-    for (const tag of aliasTags) mergedTags.add(tag);
+    for (const tag of aliasTags) {
+      mergedTags.add(tag);
+    }
   }
 
   return {

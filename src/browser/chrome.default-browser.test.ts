@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { resolveBrowserExecutableForPlatform } from "./chrome.executables.js";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
@@ -17,11 +18,10 @@ import * as fs from "node:fs";
 
 describe("browser default executable detection", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.clearAllMocks();
   });
 
-  it("prefers default Chromium browser on macOS", async () => {
+  it("prefers default Chromium browser on macOS", () => {
     vi.mocked(execFileSync).mockImplementation((cmd, args) => {
       const argsStr = Array.isArray(args) ? args.join(" ") : "";
       if (cmd === "/usr/bin/plutil" && argsStr.includes("LSHandlers")) {
@@ -39,11 +39,12 @@ describe("browser default executable detection", () => {
     });
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       const value = String(p);
-      if (value.includes("com.apple.launchservices.secure.plist")) return true;
+      if (value.includes("com.apple.launchservices.secure.plist")) {
+        return true;
+      }
       return value.includes("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
     });
 
-    const { resolveBrowserExecutableForPlatform } = await import("./chrome.executables.js");
     const exe = resolveBrowserExecutableForPlatform(
       {} as Parameters<typeof resolveBrowserExecutableForPlatform>[0],
       "darwin",
@@ -53,7 +54,7 @@ describe("browser default executable detection", () => {
     expect(exe?.kind).toBe("chrome");
   });
 
-  it("falls back when default browser is non-Chromium on macOS", async () => {
+  it("falls back when default browser is non-Chromium on macOS", () => {
     vi.mocked(execFileSync).mockImplementation((cmd, args) => {
       const argsStr = Array.isArray(args) ? args.join(" ") : "";
       if (cmd === "/usr/bin/plutil" && argsStr.includes("LSHandlers")) {
@@ -65,11 +66,12 @@ describe("browser default executable detection", () => {
     });
     vi.mocked(fs.existsSync).mockImplementation((p) => {
       const value = String(p);
-      if (value.includes("com.apple.launchservices.secure.plist")) return true;
+      if (value.includes("com.apple.launchservices.secure.plist")) {
+        return true;
+      }
       return value.includes("Google Chrome.app/Contents/MacOS/Google Chrome");
     });
 
-    const { resolveBrowserExecutableForPlatform } = await import("./chrome.executables.js");
     const exe = resolveBrowserExecutableForPlatform(
       {} as Parameters<typeof resolveBrowserExecutableForPlatform>[0],
       "darwin",

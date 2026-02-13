@@ -18,8 +18,11 @@ import {
   sendMessageDiscord,
   sendPollDiscord,
   sendStickerDiscord,
+  sendVoiceMessageDiscord,
   unpinMessageDiscord,
 } from "../../discord/send.js";
+import { resolveDiscordChannelId } from "../../discord/targets.js";
+import { withNormalizedTimestamp } from "../date-time.js";
 import {
   type ActionGate,
   jsonResult,
@@ -27,8 +30,6 @@ import {
   readStringArrayParam,
   readStringParam,
 } from "./common.js";
-import { withNormalizedTimestamp } from "../date-time.js";
-import { resolveDiscordChannelId } from "../../discord/targets.js";
 
 function parseDiscordMessageLink(link: string) {
   const normalized = link.trim();
@@ -60,7 +61,9 @@ export async function handleDiscordMessagingAction(
     );
   const accountId = readStringParam(params, "accountId");
   const normalizeMessage = (message: unknown) => {
-    if (!message || typeof message !== "object") return message;
+    if (!message || typeof message !== "object") {
+      return message;
+    }
     return withNormalizedTimestamp(
       message as Record<string, unknown>,
       (message as { timestamp?: unknown }).timestamp,
@@ -226,18 +229,51 @@ export async function handleDiscordMessagingAction(
         throw new Error("Discord message sends are disabled.");
       }
       const to = readStringParam(params, "to", { required: true });
+      const asVoice = params.asVoice === true;
+      const silent = params.silent === true;
       const content = readStringParam(params, "content", {
-        required: true,
+        required: !asVoice,
+        allowEmpty: true,
       });
-      const mediaUrl = readStringParam(params, "mediaUrl");
+      const mediaUrl =
+        readStringParam(params, "mediaUrl", { trim: false }) ??
+        readStringParam(params, "path", { trim: false }) ??
+        readStringParam(params, "filePath", { trim: false });
       const replyTo = readStringParam(params, "replyTo");
       const embeds =
         Array.isArray(params.embeds) && params.embeds.length > 0 ? params.embeds : undefined;
-      const result = await sendMessageDiscord(to, content, {
+
+      // Handle voice message sending
+      if (asVoice) {
+        if (!mediaUrl) {
+          throw new Error(
+            "Voice messages require a local media file path (mediaUrl, path, or filePath).",
+          );
+        }
+        if (content && content.trim()) {
+          throw new Error(
+            "Voice messages cannot include text content (Discord limitation). Remove the content parameter.",
+          );
+        }
+        if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
+          throw new Error(
+            "Voice messages require a local file path, not a URL. Download the file first.",
+          );
+        }
+        const result = await sendVoiceMessageDiscord(to, mediaUrl, {
+          ...(accountId ? { accountId } : {}),
+          replyTo,
+          silent,
+        });
+        return jsonResult({ ok: true, result, voiceMessage: true });
+      }
+
+      const result = await sendMessageDiscord(to, content ?? "", {
         ...(accountId ? { accountId } : {}),
         mediaUrl,
         replyTo,
         embeds,
+        silent,
       });
       return jsonResult({ ok: true, result });
     }
@@ -279,6 +315,7 @@ export async function handleDiscordMessagingAction(
       const channelId = resolveChannelId();
       const name = readStringParam(params, "name", { required: true });
       const messageId = readStringParam(params, "messageId");
+      const content = readStringParam(params, "content");
       const autoArchiveMinutesRaw = params.autoArchiveMinutes;
       const autoArchiveMinutes =
         typeof autoArchiveMinutesRaw === "number" && Number.isFinite(autoArchiveMinutesRaw)
@@ -287,10 +324,10 @@ export async function handleDiscordMessagingAction(
       const thread = accountId
         ? await createThreadDiscord(
             channelId,
-            { name, messageId, autoArchiveMinutes },
+            { name, messageId, autoArchiveMinutes, content },
             { accountId },
           )
-        : await createThreadDiscord(channelId, { name, messageId, autoArchiveMinutes });
+        : await createThreadDiscord(channelId, { name, messageId, autoArchiveMinutes, content });
       return jsonResult({ ok: true, thread });
     }
     case "threadList": {

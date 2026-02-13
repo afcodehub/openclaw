@@ -3,6 +3,7 @@ summary: "CLI reference for `openclaw hooks` (agent hooks)"
 read_when:
   - You want to manage agent hooks
   - You want to install or update hooks
+title: "hooks"
 ---
 
 # `openclaw hooks`
@@ -10,8 +11,9 @@ read_when:
 Manage agent hooks (event-driven automations for commands like `/new`, `/reset`, and gateway startup).
 
 Related:
-- Hooks: [Hooks](/hooks)
-- Plugin hooks: [Plugins](/plugin#plugin-hooks)
+
+- Hooks: [Hooks](/automation/hooks)
+- Plugin hooks: [Plugins](/tools/plugin#plugin-hooks)
 
 ## List All Hooks
 
@@ -22,6 +24,7 @@ openclaw hooks list
 List all discovered hooks from workspace, managed, and bundled directories.
 
 **Options:**
+
 - `--eligible`: Show only eligible hooks (requirements met)
 - `--json`: Output as JSON
 - `-v, --verbose`: Show detailed information including missing requirements
@@ -29,13 +32,12 @@ List all discovered hooks from workspace, managed, and bundled directories.
 **Example output:**
 
 ```
-Hooks (4/4 ready)
+Hooks (3/3 ready)
 
 Ready:
   🚀 boot-md ✓ - Run BOOT.md on gateway startup
   📝 command-logger ✓ - Log all command events to a centralized audit file
   💾 session-memory ✓ - Save session context to memory when /new command is issued
-  😈 soul-evil ✓ - Swap injected SOUL content during a purge window or by random chance
 ```
 
 **Example (verbose):**
@@ -63,9 +65,11 @@ openclaw hooks info <name>
 Show detailed information about a specific hook.
 
 **Arguments:**
+
 - `<name>`: Hook name (e.g., `session-memory`)
 
 **Options:**
+
 - `--json`: Output as JSON
 
 **Example:**
@@ -101,6 +105,7 @@ openclaw hooks check
 Show summary of hook eligibility status (how many are ready vs. not ready).
 
 **Options:**
+
 - `--json`: Output as JSON
 
 **Example output:**
@@ -125,6 +130,7 @@ Enable a specific hook by adding it to your config (`~/.openclaw/config.json`).
 can’t be enabled/disabled here. Enable/disable the plugin instead.
 
 **Arguments:**
+
 - `<name>`: Hook name (e.g., `session-memory`)
 
 **Example:**
@@ -140,11 +146,13 @@ openclaw hooks enable session-memory
 ```
 
 **What it does:**
+
 - Checks if hook exists and is eligible
 - Updates `hooks.internal.entries.<name>.enabled = true` in your config
 - Saves config to disk
 
 **After enabling:**
+
 - Restart the gateway so hooks reload (menu bar app restart on macOS, or restart your gateway process in dev).
 
 ## Disable a Hook
@@ -156,6 +164,7 @@ openclaw hooks disable <name>
 Disable a specific hook by updating your config.
 
 **Arguments:**
+
 - `<name>`: Hook name (e.g., `command-logger`)
 
 **Example:**
@@ -171,6 +180,7 @@ openclaw hooks disable command-logger
 ```
 
 **After disabling:**
+
 - Restart the gateway so hooks reload
 
 ## Install Hooks
@@ -182,11 +192,13 @@ openclaw hooks install <path-or-spec>
 Install a hook pack from a local folder/archive or npm.
 
 **What it does:**
+
 - Copies the hook pack into `~/.openclaw/hooks/<id>`
 - Enables the installed hooks in `hooks.internal.entries.*`
 - Records the install under `hooks.internal.installs`
 
 **Options:**
+
 - `-l, --link`: Link a local directory instead of copying (adds it to `hooks.internal.load.extraDirs`)
 
 **Supported archives:** `.zip`, `.tgz`, `.tar.gz`, `.tar`
@@ -217,6 +229,7 @@ openclaw hooks update --all
 Update installed hook packs (npm installs only).
 
 **Options:**
+
 - `--all`: Update all tracked hook packs
 - `--dry-run`: Show what would change without writing
 
@@ -234,7 +247,7 @@ openclaw hooks enable session-memory
 
 **Output:** `~/.openclaw/workspace/memory/YYYY-MM-DD-slug.md`
 
-**See:** [session-memory documentation](/hooks#session-memory)
+**See:** [session-memory documentation](/automation/hooks#session-memory)
 
 ### command-logger
 
@@ -261,19 +274,7 @@ cat ~/.openclaw/logs/commands.log | jq .
 grep '"action":"new"' ~/.openclaw/logs/commands.log | jq .
 ```
 
-**See:** [command-logger documentation](/hooks#command-logger)
-
-### soul-evil
-
-Swaps injected `SOUL.md` content with `SOUL_EVIL.md` during a purge window or by random chance.
-
-**Enable:**
-
-```bash
-openclaw hooks enable soul-evil
-```
-
-**See:** [SOUL Evil Hook](/hooks/soul-evil)
+**See:** [command-logger documentation](/automation/hooks#command-logger)
 
 ### boot-md
 
@@ -287,4 +288,4 @@ Runs `BOOT.md` when the gateway starts (after channels start).
 openclaw hooks enable boot-md
 ```
 
-**See:** [boot-md documentation](/hooks#boot-md)
+**See:** [boot-md documentation](/automation/hooks#boot-md)

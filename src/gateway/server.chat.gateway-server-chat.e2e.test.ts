@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
-import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { emitAgentEvent, registerAgentRunContext } from "../infra/agent-events.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import {
   connectOk,
   getReplyFromConfig,
@@ -15,6 +15,7 @@ import {
   testState,
   writeSessionStore,
 } from "./test-helpers.js";
+import { agentCommand } from "./test-helpers.mocks.js";
 
 installGatewayTestHooks({ scope: "suite" });
 
@@ -23,7 +24,7 @@ let ws: WebSocket;
 let port: number;
 
 beforeAll(async () => {
-  const started = await startServerWithClient();
+  const started = await startServerWithClient(undefined, { controlUiEnabled: true });
   server = started.server;
   ws = started.ws;
   port = started.port;
@@ -38,7 +39,9 @@ afterAll(async () => {
 async function waitFor(condition: () => boolean, timeoutMs = 1500) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (condition()) return;
+    if (condition()) {
+      return;
+    }
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error("timeout waiting for condition");
@@ -50,7 +53,9 @@ describe("gateway server chat", () => {
     let webchatWs: WebSocket | undefined;
 
     try {
-      webchatWs = new WebSocket(`ws://127.0.0.1:${port}`);
+      webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { origin: `http://127.0.0.1:${port}` },
+      });
       await new Promise<void>((resolve) => webchatWs?.once("open", resolve));
       await connectOk(webchatWs, {
         client: {
@@ -273,11 +278,17 @@ describe("gateway server chat", () => {
       expect(defaultRes.ok).toBe(true);
       const defaultMsgs = defaultRes.payload?.messages ?? [];
       const firstContentText = (msg: unknown): string | undefined => {
-        if (!msg || typeof msg !== "object") return undefined;
+        if (!msg || typeof msg !== "object") {
+          return undefined;
+        }
         const content = (msg as { content?: unknown }).content;
-        if (!Array.isArray(content) || content.length === 0) return undefined;
+        if (!Array.isArray(content) || content.length === 0) {
+          return undefined;
+        }
         const first = content[0];
-        if (!first || typeof first !== "object") return undefined;
+        if (!first || typeof first !== "object") {
+          return undefined;
+        }
         const text = (first as { text?: unknown }).text;
         return typeof text === "string" ? text : undefined;
       };
@@ -287,7 +298,9 @@ describe("gateway server chat", () => {
       testState.agentConfig = undefined;
       testState.sessionStorePath = undefined;
       testState.sessionConfig = undefined;
-      if (webchatWs) webchatWs.close();
+      if (webchatWs) {
+        webchatWs.close();
+      }
       await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
     }
   });
@@ -322,8 +335,7 @@ describe("gateway server chat", () => {
         idempotencyKey: "idem-command-1",
       });
       expect(res.ok).toBe(true);
-      const evt = await eventPromise;
-      expect(evt.payload?.message?.command).toBe(true);
+      await eventPromise;
       expect(spy.mock.calls.length).toBe(callsBefore);
     } finally {
       testState.sessionStorePath = undefined;
@@ -344,7 +356,9 @@ describe("gateway server chat", () => {
       },
     });
 
-    const webchatWs = new WebSocket(`ws://127.0.0.1:${port}`);
+    const webchatWs = new WebSocket(`ws://127.0.0.1:${port}`, {
+      headers: { origin: `http://127.0.0.1:${port}` },
+    });
     await new Promise<void>((resolve) => webchatWs.once("open", resolve));
     await connectOk(webchatWs, {
       client: {
@@ -370,8 +384,8 @@ describe("gateway server chat", () => {
 
         emitAgentEvent({
           runId: "run-tool-1",
-          stream: "tool",
-          data: { phase: "start", name: "read", toolCallId: "tool-1" },
+          stream: "assistant",
+          data: { text: "hello" },
         });
 
         const evt = await agentEvtP;
@@ -380,31 +394,6 @@ describe("gateway server chat", () => {
             ? (evt.payload as Record<string, unknown>)
             : {};
         expect(payload.sessionKey).toBe("main");
-      }
-
-      {
-        registerAgentRunContext("run-tool-off", { sessionKey: "agent:main:main" });
-
-        emitAgentEvent({
-          runId: "run-tool-off",
-          stream: "tool",
-          data: { phase: "start", name: "read", toolCallId: "tool-1" },
-        });
-        emitAgentEvent({
-          runId: "run-tool-off",
-          stream: "assistant",
-          data: { text: "hello" },
-        });
-
-        const evt = await onceMessage(
-          webchatWs,
-          (o) => o.type === "event" && o.event === "agent" && o.payload?.runId === "run-tool-off",
-          8000,
-        );
-        const payload =
-          evt.payload && typeof evt.payload === "object"
-            ? (evt.payload as Record<string, unknown>)
-            : {};
         expect(payload.stream).toBe("assistant");
       }
 

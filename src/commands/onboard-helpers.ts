@@ -1,23 +1,22 @@
+import { cancel, isCancel } from "@clack/prompts";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
-
-import { cancel, isCancel } from "@clack/prompts";
-
-import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/config.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
+import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
 import { CONFIG_PATH } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
+import { pickPrimaryLanIPv4, isValidIPv4 } from "../gateway/net.js";
 import { isSafeExecutableValue } from "../infra/exec-safety.js";
 import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
 import { isWSL } from "../infra/wsl.js";
 import { runCommandWithTimeout } from "../process/exec.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptTitle } from "../terminal/prompt-style.js";
-import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import {
   CONFIG_DIR,
   resolveUserPath,
@@ -25,30 +24,38 @@ import {
   shortenHomePath,
   sleep,
 } from "../utils.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { VERSION } from "../version.js";
-import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
 
 export function guardCancel<T>(value: T | symbol, runtime: RuntimeEnv): T {
   if (isCancel(value)) {
     cancel(stylePromptTitle("Setup cancelled.") ?? "Setup cancelled.");
     runtime.exit(0);
   }
-  return value as T;
+  return value;
 }
 
 export function summarizeExistingConfig(config: OpenClawConfig): string {
   const rows: string[] = [];
   const defaults = config.agents?.defaults;
-  if (defaults?.workspace) rows.push(shortenHomeInString(`workspace: ${defaults.workspace}`));
+  if (defaults?.workspace) {
+    rows.push(shortenHomeInString(`workspace: ${defaults.workspace}`));
+  }
   if (defaults?.model) {
     const model = typeof defaults.model === "string" ? defaults.model : defaults.model.primary;
-    if (model) rows.push(shortenHomeInString(`model: ${model}`));
+    if (model) {
+      rows.push(shortenHomeInString(`model: ${model}`));
+    }
   }
-  if (config.gateway?.mode) rows.push(shortenHomeInString(`gateway.mode: ${config.gateway.mode}`));
+  if (config.gateway?.mode) {
+    rows.push(shortenHomeInString(`gateway.mode: ${config.gateway.mode}`));
+  }
   if (typeof config.gateway?.port === "number") {
     rows.push(shortenHomeInString(`gateway.port: ${config.gateway.port}`));
   }
-  if (config.gateway?.bind) rows.push(shortenHomeInString(`gateway.bind: ${config.gateway.bind}`));
+  if (config.gateway?.bind) {
+    rows.push(shortenHomeInString(`gateway.bind: ${config.gateway.bind}`));
+  }
   if (config.gateway?.remote?.url) {
     rows.push(shortenHomeInString(`gateway.remote.url: ${config.gateway.remote.url}`));
   }
@@ -63,8 +70,30 @@ export function randomToken(): string {
 }
 
 export function normalizeGatewayTokenInput(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.trim();
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim();
+  // Reject the literal string "undefined" — a common bug when JS undefined
+  // gets coerced to a string via template literals or String(undefined).
+  if (trimmed === "undefined" || trimmed === "null") {
+    return "";
+  }
+  return trimmed;
+}
+
+export function validateGatewayPasswordInput(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return "Required";
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "Required";
+  }
+  if (trimmed === "undefined" || trimmed === "null") {
+    return 'Cannot be the literal string "undefined" or "null"';
+  }
+  return undefined;
 }
 
 export function printWizardHeader(runtime: RuntimeEnv) {
@@ -147,8 +176,12 @@ export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
     }
     if (wsl) {
       const hasWslview = await detectBinary("wslview");
-      if (hasWslview) return { argv: ["wslview"], command: "wslview" };
-      if (!hasDisplay) return { argv: null, reason: "wsl-no-wslview" };
+      if (hasWslview) {
+        return { argv: ["wslview"], command: "wslview" };
+      }
+      if (!hasDisplay) {
+        return { argv: null, reason: "wsl-no-wslview" };
+      }
     }
     const hasXdgOpen = await detectBinary("xdg-open");
     return hasXdgOpen
@@ -161,7 +194,9 @@ export async function resolveBrowserOpenCommand(): Promise<BrowserOpenCommand> {
 
 export async function detectBrowserOpenSupport(): Promise<BrowserOpenSupport> {
   const resolved = await resolveBrowserOpenCommand();
-  if (!resolved.argv) return { ok: false, reason: resolved.reason };
+  if (!resolved.argv) {
+    return { ok: false, reason: resolved.reason };
+  }
   return { ok: true, command: resolved.command };
 }
 
@@ -173,8 +208,9 @@ export function formatControlUiSshHint(params: {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
   const localUrl = `http://localhost:${params.port}${uiPath}`;
-  const tokenParam = params.token ? `?token=${encodeURIComponent(params.token)}` : "";
-  const authedUrl = params.token ? `${localUrl}${tokenParam}` : undefined;
+  const authedUrl = params.token
+    ? `${localUrl}#token=${encodeURIComponent(params.token)}`
+    : undefined;
   const sshTarget = resolveSshTargetHint();
   return [
     "No GUI detected. Open from your computer:",
@@ -198,9 +234,13 @@ function resolveSshTargetHint(): string {
 }
 
 export async function openUrl(url: string): Promise<boolean> {
-  if (shouldSkipBrowserOpenInTests()) return false;
+  if (shouldSkipBrowserOpenInTests()) {
+    return false;
+  }
   const resolved = await resolveBrowserOpenCommand();
-  if (!resolved.argv) return false;
+  if (!resolved.argv) {
+    return false;
+  }
   const quoteUrl = resolved.quoteUrl === true;
   const command = [...resolved.argv];
   if (quoteUrl) {
@@ -225,10 +265,16 @@ export async function openUrl(url: string): Promise<boolean> {
 }
 
 export async function openUrlInBackground(url: string): Promise<boolean> {
-  if (shouldSkipBrowserOpenInTests()) return false;
-  if (process.platform !== "darwin") return false;
+  if (shouldSkipBrowserOpenInTests()) {
+    return false;
+  }
+  if (process.platform !== "darwin") {
+    return false;
+  }
   const resolved = await resolveBrowserOpenCommand();
-  if (!resolved.argv || resolved.command !== "open") return false;
+  if (!resolved.argv || resolved.command !== "open") {
+    return false;
+  }
   const command = ["open", "-g", url];
   try {
     await runCommandWithTimeout(command, { timeoutMs: 5_000 });
@@ -265,7 +311,9 @@ export function resolveNodeManagerOptions(): Array<{
 }
 
 export async function moveToTrash(pathname: string, runtime: RuntimeEnv): Promise<void> {
-  if (!pathname) return;
+  if (!pathname) {
+    return;
+  }
   try {
     await fs.access(pathname);
   } catch {
@@ -281,7 +329,9 @@ export async function moveToTrash(pathname: string, runtime: RuntimeEnv): Promis
 
 export async function handleReset(scope: ResetScope, workspaceDir: string, runtime: RuntimeEnv) {
   await moveToTrash(CONFIG_PATH, runtime);
-  if (scope === "config") return;
+  if (scope === "config") {
+    return;
+  }
   await moveToTrash(path.join(CONFIG_DIR, "credentials"), runtime);
   await moveToTrash(resolveSessionTranscriptsDirForAgent(), runtime);
   if (scope === "full") {
@@ -290,8 +340,12 @@ export async function handleReset(scope: ResetScope, workspaceDir: string, runti
 }
 
 export async function detectBinary(name: string): Promise<boolean> {
-  if (!name?.trim()) return false;
-  if (!isSafeExecutableValue(name)) return false;
+  if (!name?.trim()) {
+    return false;
+  }
+  if (!isSafeExecutableValue(name)) {
+    return false;
+  }
   const resolved = name.startsWith("~") ? resolveUserPath(name) : name;
   if (
     path.isAbsolute(resolved) ||
@@ -317,7 +371,9 @@ export async function detectBinary(name: string): Promise<boolean> {
 }
 
 function shouldSkipBrowserOpenInTests(): boolean {
-  if (process.env.VITEST) return true;
+  if (process.env.VITEST) {
+    return true;
+  }
   return process.env.NODE_ENV === "test";
 }
 
@@ -369,7 +425,9 @@ export async function waitForGatewayReachable(params: {
       password: params.password,
       timeoutMs: probeTimeoutMs,
     });
-    if (probe.ok) return probe;
+    if (probe.ok) {
+      return probe;
+    }
     lastDetail = probe.detail;
     await sleep(pollMs);
   }
@@ -410,7 +468,12 @@ export function resolveControlUiLinks(params: {
     if (bind === "custom" && customBindHost && isValidIPv4(customBindHost)) {
       return customBindHost;
     }
-    if (bind === "tailnet" && tailnetIPv4) return tailnetIPv4 ?? "127.0.0.1";
+    if (bind === "tailnet" && tailnetIPv4) {
+      return tailnetIPv4 ?? "127.0.0.1";
+    }
+    if (bind === "lan") {
+      return pickPrimaryLanIPv4() ?? "127.0.0.1";
+    }
     return "127.0.0.1";
   })();
   const basePath = normalizeControlUiBasePath(params.basePath);
@@ -420,13 +483,4 @@ export function resolveControlUiLinks(params: {
     httpUrl: `http://${host}:${port}${uiPath}`,
     wsUrl: `ws://${host}:${port}${wsPath}`,
   };
-}
-
-function isValidIPv4(host: string): boolean {
-  const parts = host.split(".");
-  if (parts.length !== 4) return false;
-  return parts.every((part) => {
-    const n = Number.parseInt(part, 10);
-    return !Number.isNaN(n) && n >= 0 && n <= 255 && part === String(n);
-  });
 }

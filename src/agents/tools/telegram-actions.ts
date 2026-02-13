@@ -1,5 +1,9 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../../config/config.js";
+import {
+  resolveTelegramInlineButtonsScope,
+  resolveTelegramTargetChatType,
+} from "../../telegram/inline-buttons.js";
 import { resolveTelegramReactionLevel } from "../../telegram/reaction-level.js";
 import {
   deleteMessageTelegram,
@@ -10,10 +14,6 @@ import {
 } from "../../telegram/send.js";
 import { getCacheStats, searchStickers } from "../../telegram/sticker-cache.js";
 import { resolveTelegramToken } from "../../telegram/token.js";
-import {
-  resolveTelegramInlineButtonsScope,
-  resolveTelegramTargetChatType,
-} from "../../telegram/inline-buttons.js";
 import {
   createActionGate,
   jsonResult,
@@ -32,7 +32,9 @@ export function readTelegramButtons(
   params: Record<string, unknown>,
 ): TelegramButton[][] | undefined {
   const raw = params.buttons;
-  if (raw == null) return undefined;
+  if (raw == null) {
+    return undefined;
+  }
   if (!Array.isArray(raw)) {
     throw new Error("buttons must be an array of button rows");
   }
@@ -107,11 +109,18 @@ export async function handleTelegramAction(
         "Telegram bot token missing. Set TELEGRAM_BOT_TOKEN or channels.telegram.botToken.",
       );
     }
-    await reactMessageTelegram(chatId ?? "", messageId ?? 0, emoji ?? "", {
+    const reactionResult = await reactMessageTelegram(chatId ?? "", messageId ?? 0, emoji ?? "", {
       token,
       remove,
       accountId: accountId ?? undefined,
     });
+    if (!reactionResult.ok) {
+      return jsonResult({
+        ok: false,
+        warning: reactionResult.warning,
+        ...(remove || isEmpty ? { removed: true } : { added: emoji }),
+      });
+    }
     if (!remove && !isEmpty) {
       return jsonResult({ ok: true, added: emoji });
     }

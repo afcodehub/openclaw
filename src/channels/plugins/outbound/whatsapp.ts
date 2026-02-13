@@ -1,9 +1,9 @@
+import type { ChannelOutboundAdapter } from "../types.js";
 import { chunkText } from "../../../auto-reply/chunk.js";
 import { shouldLogVerbose } from "../../../globals.js";
+import { missingTargetError } from "../../../infra/outbound/target-errors.js";
 import { sendPollWhatsApp } from "../../../web/outbound.js";
 import { isWhatsAppGroupJid, normalizeWhatsAppTarget } from "../../../whatsapp/normalize.js";
-import type { ChannelOutboundAdapter } from "../types.js";
-import { missingTargetError } from "../../../infra/outbound/target-errors.js";
 
 export const whatsappOutbound: ChannelOutboundAdapter = {
   deliveryMode: "gateway",
@@ -23,15 +23,9 @@ export const whatsappOutbound: ChannelOutboundAdapter = {
     if (trimmed) {
       const normalizedTo = normalizeWhatsAppTarget(trimmed);
       if (!normalizedTo) {
-        if ((mode === "implicit" || mode === "heartbeat") && allowList.length > 0) {
-          return { ok: true, to: allowList[0] };
-        }
         return {
           ok: false,
-          error: missingTargetError(
-            "WhatsApp",
-            "<E.164|group JID> or channels.whatsapp.allowFrom[0]",
-          ),
+          error: missingTargetError("WhatsApp", "<E.164|group JID>"),
         };
       }
       if (isWhatsAppGroupJid(normalizedTo)) {
@@ -44,17 +38,17 @@ export const whatsappOutbound: ChannelOutboundAdapter = {
         if (allowList.includes(normalizedTo)) {
           return { ok: true, to: normalizedTo };
         }
-        return { ok: true, to: allowList[0] };
+        return {
+          ok: false,
+          error: missingTargetError("WhatsApp", "<E.164|group JID>"),
+        };
       }
       return { ok: true, to: normalizedTo };
     }
 
-    if (allowList.length > 0) {
-      return { ok: true, to: allowList[0] };
-    }
     return {
       ok: false,
-      error: missingTargetError("WhatsApp", "<E.164|group JID> or channels.whatsapp.allowFrom[0]"),
+      error: missingTargetError("WhatsApp", "<E.164|group JID>"),
     };
   },
   sendText: async ({ to, text, accountId, deps, gifPlayback }) => {

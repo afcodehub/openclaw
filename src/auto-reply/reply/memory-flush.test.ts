@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import {
   DEFAULT_MEMORY_FLUSH_SOFT_TOKENS,
   resolveMemoryFlushContextWindowTokens,
@@ -113,6 +112,17 @@ describe("shouldRunMemoryFlush", () => {
         softThresholdTokens: 2_000,
       }),
     ).toBe(true);
+  });
+
+  it("ignores stale cached totals", () => {
+    expect(
+      shouldRunMemoryFlush({
+        entry: { totalTokens: 96_000, totalTokensFresh: false, compactionCount: 1 },
+        contextWindowTokens: 100_000,
+        reserveTokensFloor: 5_000,
+        softThresholdTokens: 2_000,
+      }),
+    ).toBe(false);
   });
 });
 

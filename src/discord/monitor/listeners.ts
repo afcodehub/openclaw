@@ -6,11 +6,9 @@ import {
   MessageReactionRemoveListener,
   PresenceUpdateListener,
 } from "@buape/carbon";
-
 import { danger } from "../../globals.js";
-import { formatDurationSeconds } from "../../infra/format-duration.js";
+import { formatDurationSeconds } from "../../infra/format-time/format-duration.ts";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
-import { setPresence } from "./presence-cache.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import {
@@ -21,6 +19,7 @@ import {
 } from "./allow-list.js";
 import { formatDiscordReactionEmoji, formatDiscordUserTag } from "./format.js";
 import { resolveDiscordChannelInfo } from "./message-utils.js";
+import { setPresence } from "./presence-cache.js";
 
 type LoadedConfig = ReturnType<typeof import("../../config/config.js").loadConfig>;
 type RuntimeEnv = import("../../runtime.js").RuntimeEnv;
@@ -41,7 +40,9 @@ function logSlowDiscordListener(params: {
   event: string;
   durationMs: number;
 }) {
-  if (params.durationMs < DISCORD_SLOW_LISTENER_THRESHOLD_MS) return;
+  if (params.durationMs < DISCORD_SLOW_LISTENER_THRESHOLD_MS) {
+    return;
+  }
   const duration = formatDurationSeconds(params.durationMs, {
     decimals: 1,
     unit: "seconds",
@@ -180,24 +181,33 @@ async function handleDiscordReactionEvent(params: {
 }) {
   try {
     const { data, client, action, botUserId, guildEntries } = params;
-    if (!("user" in data)) return;
+    if (!("user" in data)) {
+      return;
+    }
     const user = data.user;
-    if (!user || user.bot) return;
-    if (!data.guild_id) return;
-
-    const guildInfo = resolveDiscordGuildEntry({
-      guild: data.guild ?? undefined,
-      guildEntries,
-    });
-    if (guildEntries && Object.keys(guildEntries).length > 0 && !guildInfo) {
+    if (!user || user.bot) {
+      return;
+    }
+    const isGuildMessage = Boolean(data.guild_id);
+    const guildInfo = isGuildMessage
+      ? resolveDiscordGuildEntry({
+          guild: data.guild ?? undefined,
+          guildEntries,
+        })
+      : null;
+    if (isGuildMessage && guildEntries && Object.keys(guildEntries).length > 0 && !guildInfo) {
       return;
     }
 
     const channel = await client.fetchChannel(data.channel_id);
-    if (!channel) return;
+    if (!channel) {
+      return;
+    }
     const channelName = "name" in channel ? (channel.name ?? undefined) : undefined;
     const channelSlug = channelName ? normalizeDiscordSlug(channelName) : "";
     const channelType = "type" in channel ? channel.type : undefined;
+    const isDirectMessage = channelType === ChannelType.DM;
+    const isGroupDm = channelType === ChannelType.GroupDM;
     const isThreadChannel =
       channelType === ChannelType.PublicThread ||
       channelType === ChannelType.PrivateThread ||
@@ -226,9 +236,13 @@ async function handleDiscordReactionEvent(params: {
       parentSlug,
       scope: isThreadChannel ? "thread" : "channel",
     });
-    if (channelConfig?.allowed === false) return;
+    if (channelConfig?.allowed === false) {
+      return;
+    }
 
-    if (botUserId && user.id === botUserId) return;
+    if (botUserId && user.id === botUserId) {
+      return;
+    }
 
     const reactionMode = guildInfo?.reactionNotifications ?? "own";
     const message = await data.message.fetch().catch(() => null);
@@ -242,12 +256,17 @@ async function handleDiscordReactionEvent(params: {
       userTag: formatDiscordUserTag(user),
       allowlist: guildInfo?.users,
     });
-    if (!shouldNotify) return;
+    if (!shouldNotify) {
+      return;
+    }
 
     const emojiLabel = formatDiscordReactionEmoji(data.emoji);
     const actorLabel = formatDiscordUserTag(user);
     const guildSlug =
-      guildInfo?.slug || (data.guild?.name ? normalizeDiscordSlug(data.guild.name) : data.guild_id);
+      guildInfo?.slug ||
+      (data.guild?.name
+        ? normalizeDiscordSlug(data.guild.name)
+        : (data.guild_id ?? (isGroupDm ? "group-dm" : "dm")));
     const channelLabel = channelSlug
       ? `#${channelSlug}`
       : channelName
@@ -256,12 +275,20 @@ async function handleDiscordReactionEvent(params: {
     const authorLabel = message?.author ? formatDiscordUserTag(message.author) : undefined;
     const baseText = `Discord reaction ${action}: ${emojiLabel} by ${actorLabel} on ${guildSlug} ${channelLabel} msg ${data.message_id}`;
     const text = authorLabel ? `${baseText} from ${authorLabel}` : baseText;
+    const memberRoleIds = Array.isArray(data.member?.roles)
+      ? data.member.roles.map((roleId: string) => String(roleId))
+      : [];
     const route = resolveAgentRoute({
       cfg: params.cfg,
       channel: "discord",
       accountId: params.accountId,
       guildId: data.guild_id ?? undefined,
-      peer: { kind: "channel", id: data.channel_id },
+      memberRoleIds,
+      peer: {
+        kind: isDirectMessage ? "direct" : isGroupDm ? "group" : "channel",
+        id: isDirectMessage ? user.id : data.channel_id,
+      },
+      parentPeer: parentId ? { kind: "channel", id: parentId } : undefined,
     });
     enqueueSystemEvent(text, {
       sessionKey: route.sessionKey,
@@ -290,7 +317,9 @@ export class DiscordPresenceListener extends PresenceUpdateListener {
         "user" in data && data.user && typeof data.user === "object" && "id" in data.user
           ? String(data.user.id)
           : undefined;
-      if (!userId) return;
+      if (!userId) {
+        return;
+      }
       setPresence(
         this.accountId,
         userId,

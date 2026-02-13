@@ -30,8 +30,12 @@ import {
 } from "./common.js";
 
 function readParentIdParam(params: Record<string, unknown>): string | null | undefined {
-  if (params.clearParent === true) return null;
-  if (params.parentId === null) return null;
+  if (params.clearParent === true) {
+    return null;
+  }
+  if (params.parentId === null) {
+    return null;
+  }
   return readStringParam(params, "parentId");
 }
 
@@ -318,6 +322,11 @@ export async function handleDiscordGuildAction(
       const rateLimitPerUser = readNumberParam(params, "rateLimitPerUser", {
         integer: true,
       });
+      const archived = typeof params.archived === "boolean" ? params.archived : undefined;
+      const locked = typeof params.locked === "boolean" ? params.locked : undefined;
+      const autoArchiveDuration = readNumberParam(params, "autoArchiveDuration", {
+        integer: true,
+      });
       const channel = accountId
         ? await editChannelDiscord(
             {
@@ -328,6 +337,9 @@ export async function handleDiscordGuildAction(
               parentId,
               nsfw,
               rateLimitPerUser: rateLimitPerUser ?? undefined,
+              archived,
+              locked,
+              autoArchiveDuration: autoArchiveDuration ?? undefined,
             },
             { accountId },
           )
@@ -339,6 +351,9 @@ export async function handleDiscordGuildAction(
             parentId,
             nsfw,
             rateLimitPerUser: rateLimitPerUser ?? undefined,
+            archived,
+            locked,
+            autoArchiveDuration: autoArchiveDuration ?? undefined,
           });
       return jsonResult({ ok: true, channel });
     }

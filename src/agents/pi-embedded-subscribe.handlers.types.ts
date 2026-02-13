@@ -1,14 +1,15 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-
-import type { ReasoningLevel } from "../auto-reply/thinking.js";
 import type { ReplyDirectiveParseResult } from "../auto-reply/reply/reply-directives.js";
+import type { ReasoningLevel } from "../auto-reply/thinking.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
+import type { HookRunner } from "../plugins/hooks.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import type { MessagingToolSend } from "./pi-embedded-messaging.js";
 import type {
   BlockReplyChunking,
   SubscribeEmbeddedPiSessionParams,
 } from "./pi-embedded-subscribe.types.js";
+import type { NormalizedUsage } from "./usage.js";
 
 export type EmbeddedSubscribeLogger = {
   debug: (message: string) => void;
@@ -37,7 +38,10 @@ export type EmbeddedPiSubscribeState = {
   deltaBuffer: string;
   blockBuffer: string;
   blockState: { thinking: boolean; final: boolean; inlineCode: InlineCodeState };
+  partialBlockState: { thinking: boolean; final: boolean; inlineCode: InlineCodeState };
   lastStreamedAssistant?: string;
+  lastStreamedAssistantCleaned?: string;
+  emittedAssistantUpdate: boolean;
   lastStreamedReasoning?: string;
   lastBlockReplyText?: string;
   assistantMessageIndex: number;
@@ -66,6 +70,7 @@ export type EmbeddedPiSubscribeContext = {
   log: EmbeddedSubscribeLogger;
   blockChunking?: BlockReplyChunking;
   blockChunker: EmbeddedBlockChunker | null;
+  hookRunner?: HookRunner;
 
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
@@ -82,6 +87,10 @@ export type EmbeddedPiSubscribeContext = {
     text: string,
     options?: { final?: boolean },
   ) => ReplyDirectiveParseResult | null;
+  consumePartialReplyDirectives: (
+    text: string,
+    options?: { final?: boolean },
+  ) => ReplyDirectiveParseResult | null;
   resetAssistantMessageState: (nextAssistantTextBaseline: number) => void;
   resetForCompactionRetry: () => void;
   finalizeAssistantTexts: (args: {
@@ -94,6 +103,10 @@ export type EmbeddedPiSubscribeContext = {
   noteCompactionRetry: () => void;
   resolveCompactionRetry: () => void;
   maybeResolveCompactionWait: () => void;
+  recordAssistantUsage: (usage: unknown) => void;
+  incrementCompactionCount: () => void;
+  getUsageTotals: () => NormalizedUsage | undefined;
+  getCompactionCount: () => number;
 };
 
 export type EmbeddedPiSubscribeEvent =

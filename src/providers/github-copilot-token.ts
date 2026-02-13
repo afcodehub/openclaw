@@ -1,5 +1,4 @@
 import path from "node:path";
-
 import { resolveStateDir } from "../config/paths.js";
 import { loadJsonFile, saveJsonFile } from "../infra/json-file.js";
 
@@ -57,18 +56,24 @@ export const DEFAULT_COPILOT_API_BASE_URL = "https://api.individual.githubcopilo
 
 export function deriveCopilotApiBaseUrlFromToken(token: string): string | null {
   const trimmed = token.trim();
-  if (!trimmed) return null;
+  if (!trimmed) {
+    return null;
+  }
 
   // The token returned from the Copilot token endpoint is a semicolon-delimited
   // set of key/value pairs. One of them is `proxy-ep=...`.
   const match = trimmed.match(/(?:^|;)\s*proxy-ep=([^;\s]+)/i);
   const proxyEp = match?.[1]?.trim();
-  if (!proxyEp) return null;
+  if (!proxyEp) {
+    return null;
+  }
 
   // pi-ai expects converting proxy.* -> api.*
   // (see upstream getGitHubCopilotBaseUrl).
   const host = proxyEp.replace(/^https?:\/\//, "").replace(/^proxy\./i, "api.");
-  if (!host) return null;
+  if (!host) {
+    return null;
+  }
 
   return `https://${host}`;
 }
@@ -77,6 +82,9 @@ export async function resolveCopilotApiToken(params: {
   githubToken: string;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
+  cachePath?: string;
+  loadJsonFileImpl?: (path: string) => unknown;
+  saveJsonFileImpl?: (path: string, value: CachedCopilotToken) => void;
 }): Promise<{
   token: string;
   expiresAt: number;
@@ -84,8 +92,10 @@ export async function resolveCopilotApiToken(params: {
   baseUrl: string;
 }> {
   const env = params.env ?? process.env;
-  const cachePath = resolveCopilotTokenCachePath(env);
-  const cached = loadJsonFile(cachePath) as CachedCopilotToken | undefined;
+  const cachePath = params.cachePath?.trim() || resolveCopilotTokenCachePath(env);
+  const loadJsonFileFn = params.loadJsonFileImpl ?? loadJsonFile;
+  const saveJsonFileFn = params.saveJsonFileImpl ?? saveJsonFile;
+  const cached = loadJsonFileFn(cachePath) as CachedCopilotToken | undefined;
   if (cached && typeof cached.token === "string" && typeof cached.expiresAt === "number") {
     if (isTokenUsable(cached)) {
       return {
@@ -116,7 +126,7 @@ export async function resolveCopilotApiToken(params: {
     expiresAt: json.expiresAt,
     updatedAt: Date.now(),
   };
-  saveJsonFile(cachePath, payload);
+  saveJsonFileFn(cachePath, payload);
 
   return {
     token: payload.token,

@@ -1,12 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-
-import { describe, expect, it } from "vitest";
-
-import handler from "./handler.js";
-import { createHookEvent } from "../../hooks.js";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
+import type { HookHandler } from "../../hooks.js";
 import { makeTempWorkspace, writeWorkspaceFile } from "../../../test-helpers/workspace.js";
+import { createHookEvent } from "../../hooks.js";
+
+// Avoid calling the embedded Pi agent (global command lane); keep this unit test deterministic.
+vi.mock("../../llm-slug-generator.js", () => ({
+  generateSlugViaLLM: vi.fn().mockResolvedValue("simple-math"),
+}));
+
+let handler: HookHandler;
+
+beforeAll(async () => {
+  ({ default: handler } = await import("./handler.js"));
+});
 
 /**
  * Create a mock session JSONL file with various entry types
@@ -98,7 +107,7 @@ describe("session-memory hook", () => {
     expect(files.length).toBe(1);
 
     // Read the memory file and verify content
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
     expect(memoryContent).toContain("user: Hello there");
     expect(memoryContent).toContain("assistant: Hi! How can I help?");
     expect(memoryContent).toContain("user: What is 2+2?");
@@ -140,7 +149,7 @@ describe("session-memory hook", () => {
 
     const memoryDir = path.join(tempDir, "memory");
     const files = await fs.readdir(memoryDir);
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
 
     // Only user/assistant messages should be present
     expect(memoryContent).toContain("user: Hello");
@@ -150,6 +159,58 @@ describe("session-memory hook", () => {
     expect(memoryContent).not.toContain("tool_use");
     expect(memoryContent).not.toContain("tool_result");
     expect(memoryContent).not.toContain("search");
+  });
+
+  it("filters out inter-session user messages", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-session-memory-");
+    const sessionsDir = path.join(tempDir, "sessions");
+    await fs.mkdir(sessionsDir, { recursive: true });
+
+    const sessionContent = [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: "Forwarded internal instruction",
+          provenance: { kind: "inter_session", sourceTool: "sessions_send" },
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: "Acknowledged" },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "External follow-up" },
+      }),
+    ].join("\n");
+    const sessionFile = await writeWorkspaceFile({
+      dir: sessionsDir,
+      name: "test-session.jsonl",
+      content: sessionContent,
+    });
+
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { workspace: tempDir } },
+    };
+
+    const event = createHookEvent("command", "new", "agent:main:main", {
+      cfg,
+      previousSessionEntry: {
+        sessionId: "test-123",
+        sessionFile,
+      },
+    });
+
+    await handler(event);
+
+    const memoryDir = path.join(tempDir, "memory");
+    const files = await fs.readdir(memoryDir);
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
+
+    expect(memoryContent).not.toContain("Forwarded internal instruction");
+    expect(memoryContent).toContain("assistant: Acknowledged");
+    expect(memoryContent).toContain("user: External follow-up");
   });
 
   it("filters out command messages starting with /", async () => {
@@ -185,7 +246,7 @@ describe("session-memory hook", () => {
 
     const memoryDir = path.join(tempDir, "memory");
     const files = await fs.readdir(memoryDir);
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
 
     // Command messages should be filtered out
     expect(memoryContent).not.toContain("/help");
@@ -236,7 +297,7 @@ describe("session-memory hook", () => {
 
     const memoryDir = path.join(tempDir, "memory");
     const files = await fs.readdir(memoryDir);
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
 
     // Only last 3 messages should be present
     expect(memoryContent).not.toContain("user: Message 1\n");
@@ -297,7 +358,7 @@ describe("session-memory hook", () => {
 
     const memoryDir = path.join(tempDir, "memory");
     const files = await fs.readdir(memoryDir);
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
 
     // Should have exactly 3 user/assistant messages (the last 3)
     expect(memoryContent).not.toContain("First message");
@@ -370,7 +431,7 @@ describe("session-memory hook", () => {
 
     const memoryDir = path.join(tempDir, "memory");
     const files = await fs.readdir(memoryDir);
-    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]!), "utf-8");
+    const memoryContent = await fs.readFile(path.join(memoryDir, files[0]), "utf-8");
 
     // Both messages should be included
     expect(memoryContent).toContain("user: Only message 1");

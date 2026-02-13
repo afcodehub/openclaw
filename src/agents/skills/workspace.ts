@@ -1,15 +1,22 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import {
   formatSkillsForPrompt,
   loadSkillsFromDir,
   type Skill,
 } from "@mariozechner/pi-coding-agent";
-
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawConfig } from "../../config/config.js";
+import type {
+  ParsedSkillFrontmatter,
+  SkillEligibilityContext,
+  SkillCommandSpec,
+  SkillEntry,
+  SkillSnapshot,
+} from "./types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CONFIG_DIR, resolveUserPath } from "../../utils.js";
+import { resolveSandboxPath } from "../sandbox-paths.js";
 import { resolveBundledSkillsDir } from "./bundled-dir.js";
 import { shouldIncludeSkill } from "./config.js";
 import {
@@ -19,13 +26,6 @@ import {
 } from "./frontmatter.js";
 import { resolvePluginSkillDirs } from "./plugin-skills.js";
 import { serializeByKey } from "./serialize.js";
-import type {
-  ParsedSkillFrontmatter,
-  SkillEligibilityContext,
-  SkillCommandSpec,
-  SkillEntry,
-  SkillSnapshot,
-} from "./types.js";
 
 const fsp = fs.promises;
 const skillsLogger = createSubsystemLogger("skills");
@@ -36,7 +36,9 @@ function debugSkillCommandOnce(
   message: string,
   meta?: Record<string, unknown>,
 ) {
-  if (skillCommandDebugOnce.has(messageKey)) return;
+  if (skillCommandDebugOnce.has(messageKey)) {
+    return;
+  }
   skillCommandDebugOnce.add(messageKey);
   skillsLogger.debug(message, meta);
 }
@@ -79,14 +81,18 @@ function sanitizeSkillCommandName(raw: string): string {
 
 function resolveUniqueSkillCommandName(base: string, used: Set<string>): string {
   const normalizedBase = base.toLowerCase();
-  if (!used.has(normalizedBase)) return base;
+  if (!used.has(normalizedBase)) {
+    return base;
+  }
   for (let index = 2; index < 1000; index += 1) {
     const suffix = `_${index}`;
     const maxBaseLength = Math.max(1, SKILL_COMMAND_MAX_LENGTH - suffix.length);
     const trimmedBase = base.slice(0, maxBaseLength);
     const candidate = `${trimmedBase}${suffix}`;
     const candidateKey = candidate.toLowerCase();
-    if (!used.has(candidateKey)) return candidate;
+    if (!used.has(candidateKey)) {
+      return candidate;
+    }
   }
   const fallback = `${base.slice(0, Math.max(1, SKILL_COMMAND_MAX_LENGTH - 2))}_x`;
   return fallback;
@@ -102,7 +108,9 @@ function loadSkillEntries(
 ): SkillEntry[] {
   const loadSkills = (params: { dir: string; source: string }): Skill[] => {
     const loaded = loadSkillsFromDir(params);
-    if (Array.isArray(loaded)) return loaded;
+    if (Array.isArray(loaded)) {
+      return loaded;
+    }
     if (
       loaded &&
       typeof loaded === "object" &&
@@ -115,7 +123,7 @@ function loadSkillEntries(
   };
 
   const managedSkillsDir = opts?.managedSkillsDir ?? path.join(CONFIG_DIR, "skills");
-  const workspaceSkillsDir = path.join(workspaceDir, "skills");
+  const workspaceSkillsDir = path.resolve(workspaceDir, "skills");
   const bundledSkillsDir = opts?.bundledSkillsDir ?? resolveBundledSkillsDir();
   const extraDirsRaw = opts?.config?.skills?.load?.extraDirs ?? [];
   const extraDirs = extraDirsRaw
@@ -144,17 +152,41 @@ function loadSkillEntries(
     dir: managedSkillsDir,
     source: "openclaw-managed",
   });
+  const personalAgentsSkillsDir = path.resolve(os.homedir(), ".agents", "skills");
+  const personalAgentsSkills = loadSkills({
+    dir: personalAgentsSkillsDir,
+    source: "agents-skills-personal",
+  });
+  const projectAgentsSkillsDir = path.resolve(workspaceDir, ".agents", "skills");
+  const projectAgentsSkills = loadSkills({
+    dir: projectAgentsSkillsDir,
+    source: "agents-skills-project",
+  });
   const workspaceSkills = loadSkills({
     dir: workspaceSkillsDir,
     source: "openclaw-workspace",
   });
 
   const merged = new Map<string, Skill>();
-  // Precedence: extra < bundled < managed < workspace
-  for (const skill of extraSkills) merged.set(skill.name, skill);
-  for (const skill of bundledSkills) merged.set(skill.name, skill);
-  for (const skill of managedSkills) merged.set(skill.name, skill);
-  for (const skill of workspaceSkills) merged.set(skill.name, skill);
+  // Precedence: extra < bundled < managed < agents-skills-personal < agents-skills-project < workspace
+  for (const skill of extraSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of bundledSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of managedSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of personalAgentsSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of projectAgentsSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of workspaceSkills) {
+    merged.set(skill.name, skill);
+  }
 
   const skillEntries: SkillEntry[] = Array.from(merged.values()).map((skill) => {
     let frontmatter: ParsedSkillFrontmatter = {};
@@ -246,7 +278,9 @@ export function resolveSkillsPromptForRun(params: {
   workspaceDir: string;
 }): string {
   const snapshotPrompt = params.skillsSnapshot?.prompt?.trim();
-  if (snapshotPrompt) return snapshotPrompt;
+  if (snapshotPrompt) {
+    return snapshotPrompt;
+  }
   if (params.entries && params.entries.length > 0) {
     const prompt = buildWorkspaceSkillsPrompt(params.workspaceDir, {
       entries: params.entries,
@@ -268,6 +302,45 @@ export function loadWorkspaceSkillEntries(
   return loadSkillEntries(workspaceDir, opts);
 }
 
+function resolveUniqueSyncedSkillDirName(base: string, used: Set<string>): string {
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  for (let index = 2; index < 10_000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+  let fallbackIndex = 10_000;
+  let fallback = `${base}-${fallbackIndex}`;
+  while (used.has(fallback)) {
+    fallbackIndex += 1;
+    fallback = `${base}-${fallbackIndex}`;
+  }
+  used.add(fallback);
+  return fallback;
+}
+
+function resolveSyncedSkillDestinationPath(params: {
+  targetSkillsDir: string;
+  entry: SkillEntry;
+  usedDirNames: Set<string>;
+}): string | null {
+  const sourceDirName = path.basename(params.entry.skill.baseDir).trim();
+  if (!sourceDirName || sourceDirName === "." || sourceDirName === "..") {
+    return null;
+  }
+  const uniqueDirName = resolveUniqueSyncedSkillDirName(sourceDirName, params.usedDirNames);
+  return resolveSandboxPath({
+    filePath: uniqueDirName,
+    cwd: params.targetSkillsDir,
+    root: params.targetSkillsDir,
+  }).resolved;
+}
+
 export async function syncSkillsToWorkspace(params: {
   sourceWorkspaceDir: string;
   targetWorkspaceDir: string;
@@ -277,7 +350,9 @@ export async function syncSkillsToWorkspace(params: {
 }) {
   const sourceDir = resolveUserPath(params.sourceWorkspaceDir);
   const targetDir = resolveUserPath(params.targetWorkspaceDir);
-  if (sourceDir === targetDir) return;
+  if (sourceDir === targetDir) {
+    return;
+  }
 
   await serializeByKey(`syncSkills:${targetDir}`, async () => {
     const targetSkillsDir = path.join(targetDir, "skills");
@@ -291,8 +366,28 @@ export async function syncSkillsToWorkspace(params: {
     await fsp.rm(targetSkillsDir, { recursive: true, force: true });
     await fsp.mkdir(targetSkillsDir, { recursive: true });
 
+    const usedDirNames = new Set<string>();
     for (const entry of entries) {
-      const dest = path.join(targetSkillsDir, entry.skill.name);
+      let dest: string | null = null;
+      try {
+        dest = resolveSyncedSkillDestinationPath({
+          targetSkillsDir,
+          entry,
+          usedDirNames,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        console.warn(
+          `[skills] Failed to resolve safe destination for ${entry.skill.name}: ${message}`,
+        );
+        continue;
+      }
+      if (!dest) {
+        console.warn(
+          `[skills] Failed to resolve safe destination for ${entry.skill.name}: invalid source directory name`,
+        );
+        continue;
+      }
       try {
         await fsp.cp(entry.skill.baseDir, dest, {
           recursive: true,
@@ -371,8 +466,12 @@ export function buildWorkspaceSkillCommandSpecs(
       )
         .trim()
         .toLowerCase();
-      if (!kindRaw) return undefined;
-      if (kindRaw !== "tool") return undefined;
+      if (!kindRaw) {
+        return undefined;
+      }
+      if (kindRaw !== "tool") {
+        return undefined;
+      }
 
       const toolName = (
         entry.frontmatter?.["command-tool"] ??

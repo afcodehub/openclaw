@@ -1,10 +1,10 @@
 import { loadConfig } from "../config/config.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
+import { convertMarkdownTables } from "../markdown/tables.js";
 import { mediaKindFromMime } from "../media/constants.js";
 import { saveMediaBuffer } from "../media/store.js";
 import { loadWebMedia } from "../web/media.js";
-import { convertMarkdownTables } from "../markdown/tables.js";
-import { resolveIMessageAccount } from "./accounts.js";
+import { resolveIMessageAccount, type ResolvedIMessageAccount } from "./accounts.js";
 import { createIMessageRpcClient, type IMessageRpcClient } from "./client.js";
 import { formatIMessageChatTarget, type IMessageService, parseIMessageTarget } from "./targets.js";
 
@@ -19,6 +19,13 @@ export type IMessageSendOpts = {
   timeoutMs?: number;
   chatId?: number;
   client?: IMessageRpcClient;
+  config?: ReturnType<typeof loadConfig>;
+  account?: ResolvedIMessageAccount;
+  resolveAttachmentImpl?: (
+    mediaUrl: string,
+    maxBytes: number,
+  ) => Promise<{ path: string; contentType?: string }>;
+  createClient?: (params: { cliPath: string; dbPath?: string }) => Promise<IMessageRpcClient>;
 };
 
 export type IMessageSendResult = {
@@ -26,7 +33,9 @@ export type IMessageSendResult = {
 };
 
 function resolveMessageId(result: Record<string, unknown> | null | undefined): string | null {
-  if (!result) return null;
+  if (!result) {
+    return null;
+  }
   const raw =
     (typeof result.messageId === "string" && result.messageId.trim()) ||
     (typeof result.message_id === "string" && result.message_id.trim()) ||
@@ -56,11 +65,13 @@ export async function sendMessageIMessage(
   text: string,
   opts: IMessageSendOpts = {},
 ): Promise<IMessageSendResult> {
-  const cfg = loadConfig();
-  const account = resolveIMessageAccount({
-    cfg,
-    accountId: opts.accountId,
-  });
+  const cfg = opts.config ?? loadConfig();
+  const account =
+    opts.account ??
+    resolveIMessageAccount({
+      cfg,
+      accountId: opts.accountId,
+    });
   const cliPath = opts.cliPath?.trim() || account.config.cliPath?.trim() || "imsg";
   const dbPath = opts.dbPath?.trim() || account.config.dbPath?.trim();
   const target = parseIMessageTarget(opts.chatId ? formatIMessageChatTarget(opts.chatId) : to);
@@ -79,11 +90,14 @@ export async function sendMessageIMessage(
   let filePath: string | undefined;
 
   if (opts.mediaUrl?.trim()) {
-    const resolved = await resolveAttachment(opts.mediaUrl.trim(), maxBytes);
+    const resolveAttachmentFn = opts.resolveAttachmentImpl ?? resolveAttachment;
+    const resolved = await resolveAttachmentFn(opts.mediaUrl.trim(), maxBytes);
     filePath = resolved.path;
     if (!message.trim()) {
       const kind = mediaKindFromMime(resolved.contentType ?? undefined);
-      if (kind) message = kind === "image" ? "<media:image>" : `<media:${kind}>`;
+      if (kind) {
+        message = kind === "image" ? "<media:image>" : `<media:${kind}>`;
+      }
     }
   }
 
@@ -101,10 +115,12 @@ export async function sendMessageIMessage(
 
   const params: Record<string, unknown> = {
     text: message,
-    service: (service || "auto") as IMessageService,
+    service: service || "auto",
     region,
   };
-  if (filePath) params.file = filePath;
+  if (filePath) {
+    params.file = filePath;
+  }
 
   if (target.kind === "chat_id") {
     params.chat_id = target.chatId;
@@ -116,10 +132,14 @@ export async function sendMessageIMessage(
     params.to = target.to;
   }
 
-  const client = opts.client ?? (await createIMessageRpcClient({ cliPath, dbPath }));
+  const client =
+    opts.client ??
+    (opts.createClient
+      ? await opts.createClient({ cliPath, dbPath })
+      : await createIMessageRpcClient({ cliPath, dbPath }));
   const shouldClose = !opts.client;
   try {
-    const result = await client.request<Record<string, unknown>>("send", params, {
+    const result = await client.request<{ ok?: string }>("send", params, {
       timeoutMs: opts.timeoutMs,
     });
     const resolvedId = resolveMessageId(result);

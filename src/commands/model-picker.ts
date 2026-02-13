@@ -1,4 +1,10 @@
-import { ensureAuthProfileStore, listProfilesForProvider } from "../agents/auth-profiles.js";
+import type { OpenClawConfig } from "../config/config.js";
+import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
+import {
+  ensureAuthProfileStore,
+  listProfilesForProvider,
+  upsertAuthProfileWithLock,
+} from "../agents/auth-profiles.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { getCustomProviderApiKey, resolveEnvApiKey } from "../agents/model-auth.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
@@ -9,13 +15,22 @@ import {
   normalizeProviderId,
   resolveConfiguredModelRef,
 } from "../agents/model-selection.js";
-import type { OpenClawConfig } from "../config/config.js";
-import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
 import { formatTokenK } from "./models/shared.js";
+import { OPENAI_CODEX_DEFAULT_MODEL } from "./openai-codex-model-default.js";
 
 const KEEP_VALUE = "__keep__";
 const MANUAL_VALUE = "__manual__";
+const VLLM_VALUE = "__vllm__";
 const PROVIDER_FILTER_THRESHOLD = 30;
+const VLLM_DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1";
+const VLLM_DEFAULT_CONTEXT_WINDOW = 128000;
+const VLLM_DEFAULT_MAX_TOKENS = 8192;
+const VLLM_DEFAULT_COST = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+};
 
 // Models that are internal routing features and should not be shown in selection lists.
 // These may be valid as defaults (e.g., set automatically during auth flow) but are not
@@ -27,13 +42,14 @@ type PromptDefaultModelParams = {
   prompter: WizardPrompter;
   allowKeep?: boolean;
   includeManual?: boolean;
+  includeVllm?: boolean;
   ignoreAllowlist?: boolean;
   preferredProvider?: string;
   agentDir?: string;
   message?: string;
 };
 
-type PromptDefaultModelResult = { model?: string };
+type PromptDefaultModelResult = { model?: string; config?: OpenClawConfig };
 type PromptModelAllowlistResult = { models?: string[] };
 
 function hasAuthForProvider(
@@ -41,15 +57,23 @@ function hasAuthForProvider(
   cfg: OpenClawConfig,
   store: ReturnType<typeof ensureAuthProfileStore>,
 ) {
-  if (listProfilesForProvider(store, provider).length > 0) return true;
-  if (resolveEnvApiKey(provider)) return true;
-  if (getCustomProviderApiKey(cfg, provider)) return true;
+  if (listProfilesForProvider(store, provider).length > 0) {
+    return true;
+  }
+  if (resolveEnvApiKey(provider)) {
+    return true;
+  }
+  if (getCustomProviderApiKey(cfg, provider)) {
+    return true;
+  }
   return false;
 }
 
 function resolveConfiguredModelRaw(cfg: OpenClawConfig): string {
   const raw = cfg.agents?.defaults?.model as { primary?: string } | string | undefined;
-  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "string") {
+    return raw.trim();
+  }
   return raw?.primary?.trim() ?? "";
 }
 
@@ -65,7 +89,9 @@ function normalizeModelKeys(values: string[]): string[] {
   const next: string[] = [];
   for (const raw of values) {
     const value = String(raw ?? "").trim();
-    if (!value || seen.has(value)) continue;
+    if (!value || seen.has(value)) {
+      continue;
+    }
     seen.add(value);
     next.push(value);
   }
@@ -84,7 +110,9 @@ async function promptManualModel(params: {
     validate: params.allowBlank ? undefined : (value) => (value?.trim() ? undefined : "Required"),
   });
   const model = String(modelInput ?? "").trim();
-  if (!model) return {};
+  if (!model) {
+    return {};
+  }
   return { model };
 }
 
@@ -94,6 +122,7 @@ export async function promptDefaultModel(
   const cfg = params.config;
   const allowKeep = params.allowKeep ?? true;
   const includeManual = params.includeManual ?? true;
+  const includeVllm = params.includeVllm ?? false;
   const ignoreAllowlist = params.ignoreAllowlist ?? false;
   const preferredProviderRaw = params.preferredProvider?.trim();
   const preferredProvider = preferredProviderRaw
@@ -140,7 +169,7 @@ export async function promptDefaultModel(
     });
   }
 
-  const providers = Array.from(new Set(models.map((entry) => entry.provider))).sort((a, b) =>
+  const providers = Array.from(new Set(models.map((entry) => entry.provider))).toSorted((a, b) =>
     a.localeCompare(b),
   );
 
@@ -171,19 +200,22 @@ export async function promptDefaultModel(
     models = models.filter((entry) => entry.provider === preferredProvider);
   }
 
-  const authStore = ensureAuthProfileStore(params.agentDir, {
+  const agentDir = params.agentDir;
+  const authStore = ensureAuthProfileStore(agentDir, {
     allowKeychainPrompt: false,
   });
   const authCache = new Map<string, boolean>();
   const hasAuth = (provider: string) => {
     const cached = authCache.get(provider);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      return cached;
+    }
     const value = hasAuthForProvider(provider, cfg, authStore);
     authCache.set(provider, value);
     return value;
   };
 
-  const options: WizardSelectOption<string>[] = [];
+  const options: WizardSelectOption[] = [];
   if (allowKeep) {
     options.push({
       value: KEEP_VALUE,
@@ -197,6 +229,13 @@ export async function promptDefaultModel(
   if (includeManual) {
     options.push({ value: MANUAL_VALUE, label: "Enter model manually" });
   }
+  if (includeVllm && agentDir) {
+    options.push({
+      value: VLLM_VALUE,
+      label: "vLLM (custom)",
+      hint: "Enter vLLM URL + API key + model",
+    });
+  }
 
   const seen = new Set<string>();
   const addModelOption = (entry: {
@@ -207,16 +246,30 @@ export async function promptDefaultModel(
     reasoning?: boolean;
   }) => {
     const key = modelKey(entry.provider, entry.id);
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      return;
+    }
     // Skip internal router models that can't be directly called via API.
-    if (HIDDEN_ROUTER_MODELS.has(key)) return;
+    if (HIDDEN_ROUTER_MODELS.has(key)) {
+      return;
+    }
     const hints: string[] = [];
-    if (entry.name && entry.name !== entry.id) hints.push(entry.name);
-    if (entry.contextWindow) hints.push(`ctx ${formatTokenK(entry.contextWindow)}`);
-    if (entry.reasoning) hints.push("reasoning");
+    if (entry.name && entry.name !== entry.id) {
+      hints.push(entry.name);
+    }
+    if (entry.contextWindow) {
+      hints.push(`ctx ${formatTokenK(entry.contextWindow)}`);
+    }
+    if (entry.reasoning) {
+      hints.push("reasoning");
+    }
     const aliases = aliasIndex.byKey.get(key);
-    if (aliases?.length) hints.push(`alias: ${aliases.join(", ")}`);
-    if (!hasAuth(entry.provider)) hints.push("auth missing");
+    if (aliases?.length) {
+      hints.push(`alias: ${aliases.join(", ")}`);
+    }
+    if (!hasAuth(entry.provider)) {
+      hints.push("auth missing");
+    }
     options.push({
       value: key,
       label: key,
@@ -225,7 +278,9 @@ export async function promptDefaultModel(
     seen.add(key);
   };
 
-  for (const entry of models) addModelOption(entry);
+  for (const entry of models) {
+    addModelOption(entry);
+  }
 
   if (configuredKey && !seen.has(configuredKey)) {
     options.push({
@@ -254,13 +309,81 @@ export async function promptDefaultModel(
     initialValue,
   });
 
-  if (selection === KEEP_VALUE) return {};
+  if (selection === KEEP_VALUE) {
+    return {};
+  }
   if (selection === MANUAL_VALUE) {
     return promptManualModel({
       prompter: params.prompter,
       allowBlank: false,
       initialValue: configuredRaw || resolvedKey || undefined,
     });
+  }
+  if (selection === VLLM_VALUE) {
+    if (!agentDir) {
+      await params.prompter.note(
+        "vLLM setup requires an agent directory context.",
+        "vLLM not available",
+      );
+      return {};
+    }
+    const baseUrlRaw = await params.prompter.text({
+      message: "vLLM base URL",
+      initialValue: VLLM_DEFAULT_BASE_URL,
+      placeholder: VLLM_DEFAULT_BASE_URL,
+      validate: (value) => (value?.trim() ? undefined : "Required"),
+    });
+    const apiKeyRaw = await params.prompter.text({
+      message: "vLLM API key",
+      placeholder: "sk-... (or any non-empty string)",
+      validate: (value) => (value?.trim() ? undefined : "Required"),
+    });
+    const modelIdRaw = await params.prompter.text({
+      message: "vLLM model",
+      placeholder: "meta-llama/Meta-Llama-3-8B-Instruct",
+      validate: (value) => (value?.trim() ? undefined : "Required"),
+    });
+
+    const baseUrl = String(baseUrlRaw ?? "")
+      .trim()
+      .replace(/\/+$/, "");
+    const apiKey = String(apiKeyRaw ?? "").trim();
+    const modelId = String(modelIdRaw ?? "").trim();
+
+    await upsertAuthProfileWithLock({
+      profileId: "vllm:default",
+      credential: { type: "api_key", provider: "vllm", key: apiKey },
+      agentDir,
+    });
+
+    const nextConfig: OpenClawConfig = {
+      ...cfg,
+      models: {
+        ...cfg.models,
+        mode: cfg.models?.mode ?? "merge",
+        providers: {
+          ...cfg.models?.providers,
+          vllm: {
+            baseUrl,
+            api: "openai-completions",
+            apiKey: "VLLM_API_KEY",
+            models: [
+              {
+                id: modelId,
+                name: modelId,
+                reasoning: false,
+                input: ["text"],
+                cost: VLLM_DEFAULT_COST,
+                contextWindow: VLLM_DEFAULT_CONTEXT_WINDOW,
+                maxTokens: VLLM_DEFAULT_MAX_TOKENS,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    return { model: `vllm/${modelId}`, config: nextConfig };
   }
   return { model: String(selection) };
 }
@@ -299,13 +422,15 @@ export async function promptModelAllowlist(params: {
         params.message ??
         "Allowlist models (comma-separated provider/model; blank to keep current)",
       initialValue: existingKeys.join(", "),
-      placeholder: "openai-codex/gpt-5.2, anthropic/claude-opus-4-5",
+      placeholder: `${OPENAI_CODEX_DEFAULT_MODEL}, anthropic/claude-opus-4-6`,
     });
     const parsed = String(raw ?? "")
       .split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0);
-    if (parsed.length === 0) return {};
+    if (parsed.length === 0) {
+      return {};
+    }
     return { models: normalizeModelKeys(parsed) };
   }
 
@@ -319,13 +444,15 @@ export async function promptModelAllowlist(params: {
   const authCache = new Map<string, boolean>();
   const hasAuth = (provider: string) => {
     const cached = authCache.get(provider);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      return cached;
+    }
     const value = hasAuthForProvider(provider, cfg, authStore);
     authCache.set(provider, value);
     return value;
   };
 
-  const options: WizardSelectOption<string>[] = [];
+  const options: WizardSelectOption[] = [];
   const seen = new Set<string>();
   const addModelOption = (entry: {
     provider: string;
@@ -335,15 +462,29 @@ export async function promptModelAllowlist(params: {
     reasoning?: boolean;
   }) => {
     const key = modelKey(entry.provider, entry.id);
-    if (seen.has(key)) return;
-    if (HIDDEN_ROUTER_MODELS.has(key)) return;
+    if (seen.has(key)) {
+      return;
+    }
+    if (HIDDEN_ROUTER_MODELS.has(key)) {
+      return;
+    }
     const hints: string[] = [];
-    if (entry.name && entry.name !== entry.id) hints.push(entry.name);
-    if (entry.contextWindow) hints.push(`ctx ${formatTokenK(entry.contextWindow)}`);
-    if (entry.reasoning) hints.push("reasoning");
+    if (entry.name && entry.name !== entry.id) {
+      hints.push(entry.name);
+    }
+    if (entry.contextWindow) {
+      hints.push(`ctx ${formatTokenK(entry.contextWindow)}`);
+    }
+    if (entry.reasoning) {
+      hints.push("reasoning");
+    }
     const aliases = aliasIndex.byKey.get(key);
-    if (aliases?.length) hints.push(`alias: ${aliases.join(", ")}`);
-    if (!hasAuth(entry.provider)) hints.push("auth missing");
+    if (aliases?.length) {
+      hints.push(`alias: ${aliases.join(", ")}`);
+    }
+    if (!hasAuth(entry.provider)) {
+      hints.push("auth missing");
+    }
     options.push({
       value: key,
       label: key,
@@ -356,11 +497,15 @@ export async function promptModelAllowlist(params: {
     ? catalog.filter((entry) => allowedKeySet.has(modelKey(entry.provider, entry.id)))
     : catalog;
 
-  for (const entry of filteredCatalog) addModelOption(entry);
+  for (const entry of filteredCatalog) {
+    addModelOption(entry);
+  }
 
   const supplementalKeys = allowedKeySet ? allowedKeys : existingKeys;
   for (const key of supplementalKeys) {
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      continue;
+    }
     options.push({
       value: key,
       label: key,
@@ -369,7 +514,9 @@ export async function promptModelAllowlist(params: {
     seen.add(key);
   }
 
-  if (options.length === 0) return {};
+  if (options.length === 0) {
+    return {};
+  }
 
   const selection = await params.prompter.multiselect({
     message: params.message ?? "Models in /model picker (multi-select)",
@@ -377,13 +524,19 @@ export async function promptModelAllowlist(params: {
     initialValues: initialKeys.length > 0 ? initialKeys : undefined,
   });
   const selected = normalizeModelKeys(selection.map((value) => String(value)));
-  if (selected.length > 0) return { models: selected };
-  if (existingKeys.length === 0) return { models: [] };
+  if (selected.length > 0) {
+    return { models: selected };
+  }
+  if (existingKeys.length === 0) {
+    return { models: [] };
+  }
   const confirmClear = await params.prompter.confirm({
     message: "Clear the model allowlist? (shows all models)",
     initialValue: false,
   });
-  if (!confirmClear) return {};
+  if (!confirmClear) {
+    return {};
+  }
   return { models: [] };
 }
 
@@ -418,7 +571,9 @@ export function applyModelAllowlist(cfg: OpenClawConfig, models: string[]): Open
   const defaults = cfg.agents?.defaults;
   const normalized = normalizeModelKeys(models);
   if (normalized.length === 0) {
-    if (!defaults?.models) return cfg;
+    if (!defaults?.models) {
+      return cfg;
+    }
     const { models: _ignored, ...restDefaults } = defaults;
     return {
       ...cfg,
@@ -452,7 +607,9 @@ export function applyModelFallbacksFromSelection(
   selection: string[],
 ): OpenClawConfig {
   const normalized = normalizeModelKeys(selection);
-  if (normalized.length <= 1) return cfg;
+  if (normalized.length <= 1) {
+    return cfg;
+  }
 
   const resolved = resolveConfiguredModelRef({
     cfg,
@@ -460,7 +617,9 @@ export function applyModelFallbacksFromSelection(
     defaultModel: DEFAULT_MODEL,
   });
   const resolvedKey = modelKey(resolved.provider, resolved.model);
-  if (!normalized.includes(resolvedKey)) return cfg;
+  if (!normalized.includes(resolvedKey)) {
+    return cfg;
+  }
 
   const defaults = cfg.agents?.defaults;
   const existingModel = defaults?.model;

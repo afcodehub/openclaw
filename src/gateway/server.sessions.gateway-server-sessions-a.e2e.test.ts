@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
+import { DEFAULT_PROVIDER } from "../agents/defaults.js";
 import {
   connectOk,
   embeddedRunMock,
@@ -14,7 +15,6 @@ import {
   testState,
   writeSessionStore,
 } from "./test-helpers.js";
-import { DEFAULT_PROVIDER } from "../agents/defaults.js";
 
 const sessionCleanupMocks = vi.hoisted(() => ({
   clearSessionQueues: vi.fn(() => ({ followupCleared: 0, laneCleared: 0, keys: [] })),
@@ -56,8 +56,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  if (previousToken === undefined) delete process.env.OPENCLAW_GATEWAY_TOKEN;
-  else process.env.OPENCLAW_GATEWAY_TOKEN = previousToken;
+  if (previousToken === undefined) {
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  } else {
+    process.env.OPENCLAW_GATEWAY_TOKEN = previousToken;
+  }
 });
 
 const openClient = async (opts?: Parameters<typeof connectOk>[1]) => {
@@ -154,6 +157,7 @@ describe("gateway server sessions", () => {
       sessions: Array<{
         key: string;
         totalTokens?: number;
+        totalTokensFresh?: boolean;
         thinkingLevel?: string;
         verboseLevel?: string;
         lastAccountId?: string;
@@ -166,7 +170,8 @@ describe("gateway server sessions", () => {
     expect(list1.payload?.sessions.some((s) => s.key === "global")).toBe(false);
     expect(list1.payload?.defaults?.modelProvider).toBe(DEFAULT_PROVIDER);
     const main = list1.payload?.sessions.find((s) => s.key === "agent:main:main");
-    expect(main?.totalTokens).toBe(30);
+    expect(main?.totalTokens).toBeUndefined();
+    expect(main?.totalTokensFresh).toBe(false);
     expect(main?.thinkingLevel).toBe("low");
     expect(main?.verboseLevel).toBe("on");
     expect(main?.lastAccountId).toBe("work");

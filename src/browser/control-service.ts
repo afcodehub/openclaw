@@ -1,6 +1,7 @@
 import { loadConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveBrowserConfig, resolveProfile } from "./config.js";
+import { ensureBrowserControlAuth } from "./control-auth.js";
 import { ensureChromeExtensionRelayServer } from "./extension-relay.js";
 import { type BrowserServerState, createBrowserRouteContext } from "./server-context.js";
 
@@ -19,11 +20,23 @@ export function createBrowserControlContext() {
 }
 
 export async function startBrowserControlServiceFromConfig(): Promise<BrowserServerState | null> {
-  if (state) return state;
+  if (state) {
+    return state;
+  }
 
   const cfg = loadConfig();
   const resolved = resolveBrowserConfig(cfg.browser, cfg);
-  if (!resolved.enabled) return null;
+  if (!resolved.enabled) {
+    return null;
+  }
+  try {
+    const ensured = await ensureBrowserControlAuth({ cfg });
+    if (ensured.generatedToken) {
+      logService.info("No browser auth configured; generated gateway.auth.token automatically.");
+    }
+  } catch (err) {
+    logService.warn(`failed to auto-configure browser auth: ${String(err)}`);
+  }
 
   state = {
     server: null,
@@ -36,7 +49,9 @@ export async function startBrowserControlServiceFromConfig(): Promise<BrowserSer
   // so the extension can connect before the first browser action.
   for (const name of Object.keys(resolved.profiles)) {
     const profile = resolveProfile(resolved, name);
-    if (!profile || profile.driver !== "extension") continue;
+    if (!profile || profile.driver !== "extension") {
+      continue;
+    }
     await ensureChromeExtensionRelayServer({ cdpUrl: profile.cdpUrl }).catch((err) => {
       logService.warn(`Chrome extension relay init failed for profile "${name}": ${String(err)}`);
     });
@@ -50,7 +65,9 @@ export async function startBrowserControlServiceFromConfig(): Promise<BrowserSer
 
 export async function stopBrowserControlService(): Promise<void> {
   const current = state;
-  if (!current) return;
+  if (!current) {
+    return;
+  }
 
   const ctx = createBrowserRouteContext({
     getState: () => state,
